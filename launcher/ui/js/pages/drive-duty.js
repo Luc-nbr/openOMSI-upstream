@@ -125,11 +125,12 @@ function TourBus({ tour }) {
     .filter(Boolean)
     .slice(0, 10);
   if (!buses.length) return null;
-  return html`<div class="row muted small" style="gap:6px;flex-wrap:wrap;align-items:center">
+  return html`<div class="row muted small tour-buses" style="gap:6px;flex-wrap:wrap;align-items:center">
     <span>${t('Buses the timetable gives this tour:')}</span>
     ${buses.map(({ v, paint, number }) => {
       const on = v.file === c.bus && (c.paint || '') === paint;
-      return html`<${Button} small kind=${on ? 'primary' : ''} icon=${on ? 'check' : 'bus'} label=${[v.name, paint].filter(Boolean).join(' - ')} onClick=${() => choose({ bus: v.file, paint, number, hof_manual: false })} />`;
+      const name = [v.name, paint].filter(Boolean).join(' - ');
+      return html`<${Button} small kind=${on ? 'primary' : ''} icon=${on ? 'check' : 'bus'} title=${name} onClick=${() => choose({ bus: v.file, paint, number, hof_manual: false })}><span class="ellipsis">${name}</span></${Button}>`;
     })}
   </div>`;
 }
