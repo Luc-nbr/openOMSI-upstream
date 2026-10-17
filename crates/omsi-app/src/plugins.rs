@@ -346,7 +346,7 @@ fn stop_info(v: &mut Vec<(&'static str, InfoValue)>, stops: &[crate::schedule::P
         }
     }
     // the last stop before the next one the trip calls at (passing stations left out)
-    if let Some(s) = stops.iter().take(next).rev().find(|s| s.stops) {
+    if let Some(s) = stops.iter().take(next).rev().find(|s| s.calls()) {
         v.push(("previous_stop", Text(s.name.trim().to_string())));
         v.push(("previous_stop_id", Num(s.object_id as f64)));
         if let Some(m) = distance(s) {

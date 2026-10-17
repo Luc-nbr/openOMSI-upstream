@@ -7,6 +7,13 @@ use crate::io::{Duty, Stop, Trip};
 
 const NEW: &str = crate::api::VERSION;
 const V36: &str = "0.3.36";
+/// Most stops one `duty.set_closed_stops` closes.
+pub const MAX_CLOSED: usize = 64;
+
+/// A plugin's text for the screen: one line, no control characters, at most `max` characters.
+fn one_line(s: &str, max: usize) -> String {
+    s.chars().filter(|c| !c.is_control()).take(max).collect::<String>().trim().to_string()
+}
 
 fn stop(s: &Stop, n: usize, next: Option<usize>) -> Value {
     let mut r = vec![("number", Value::from(n + 1)), ("name", s.name.trim().into()), ("id", Value::Int(s.id)), ("arrival", s.arr.into()), ("departure", s.dep.into()), ("stops", s.stops.into()), ("closed", s.closed.into())];
@@ -71,10 +78,13 @@ pub static FNS: &[ApiFn] = &[
         Ok::<_, ApiError>(super::core::ok_or_reason(c.io().duty_start(&line, &tour, trip, stop)))
     }),
     def!("duty.finish", "duty", [], "boolean", "Gives the duty up (the bus drives on without a timetable); `true` when there was one.", NEW, WorldWrite, false, |c, a| c.io().duty_end()),
-    def!("duty.set_closed_stops", "duty", [p("stops", "table"), o("via", "string")], "boolean", "Closes stops of the duty's route for today - a diversion, roadworks: a list of their names (on every trip of the duty), and the way round them (`via`). The navigator strikes them through and shows `via` for the next one; the bus does not call there, and the duty goes on past them without counting them missed (no `stops_skipped`). Each call replaces the list, an empty one opens them all again; a duty taken anew (`duty.start`) starts with none. `duty.stops` marks them `closed`. `true` when there is a duty.", V36, WorldWrite, false, |c, a| {
-        let stops: Vec<String> = a.table(0)?.items().iter().filter_map(Value::to_text).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-        let via = a.opt_str(1)?.unwrap_or_default();
-        Ok::<_, ApiError>(c.io().duty_set_closed_stops(&stops, via.trim()))
+    def!("duty.set_closed_stops", "duty", [p("stops", "table"), o("via", "string")], "boolean", "Closes stops of the duty's route for today - a diversion, roadworks: a list of their names (on every trip of the duty), and the way round them (`via`). The navigator strikes them through and shows `via` for the next one; the bus does not call there, and the duty goes on past them without counting them missed (no `stops_skipped`). Each call replaces the list (64 names at most), an empty one opens them all again; a duty taken anew (`duty.start`) starts with none. `duty.stops` marks them `closed`. `true` when there is a duty.", V36, WorldWrite, false, |c, a| {
+        let stops: Vec<String> = a.table(0)?.items().iter().filter_map(Value::to_text).map(|s| one_line(&s, crate::ui::MAX_TEXT)).filter(|s| !s.is_empty()).collect();
+        if stops.len() > MAX_CLOSED {
+            return Err(ApiError(format!("omsi.duty.set_closed_stops: at most {MAX_CLOSED} stops, not {}", stops.len())));
+        }
+        let via = one_line(&a.opt_str(1)?.unwrap_or_default(), crate::ui::MAX_TEXT);
+        Ok::<_, ApiError>(c.io().duty_set_closed_stops(&stops, &via))
     }),
     def!("timetable.lines", "duty", [], "list of tables", "The map's lines: `{name, user_allowed, tours}`, each tour `{number, today, trips}` (`today`: it runs on the game's date).", NEW, None, false, |c, a| {
         Value::List(c.io().timetable_lines().into_iter().map(|l| rec(vec![("name", l.name.into()), ("user_allowed", l.user_allowed.into()), ("tours", Value::List(l.tours.into_iter().map(|t| rec(vec![("number", t.number.into()), ("today", t.today.into()), ("trips", t.trips.into())])).collect()))])).collect())

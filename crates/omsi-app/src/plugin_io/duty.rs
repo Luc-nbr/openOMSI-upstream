@@ -48,8 +48,13 @@ pub(crate) fn skip_next(app: &mut App) -> Option<String> {
 /// goes on past them.
 pub(crate) fn set_closed_stops(app: &mut App, stops: &[String], via: &str) -> bool {
     let Some(d) = app.session.duty.as_mut() else { return false };
+    let closed = |d: &crate::schedule::PlayerDuty| d.trips.iter().flat_map(|t| t.stops.iter().map(|s| s.closed.clone())).collect::<Vec<_>>();
+    let before = closed(d);
     let n = d.set_closed_stops(stops, via);
-    log::info!("duty: {n} stop(s) closed by a plugin ({})", stops.join(", "));
+    // (a plugin may say the same every frame: the log hears of a change only)
+    if closed(d) != before {
+        log::info!("duty: {n} stop(s) closed by a plugin ({})", stops.join(", "));
+    }
     true
 }
 
