@@ -455,6 +455,7 @@ impl Showroom {
             length = total;
         }
         add_floor(renderer, &mut scene);
+        add_sky_shade(renderer, &mut scene, centre, bb[0], length, bb[5] + bb[2] * 0.5);
         let lighting = lighting_for(&args, &weather, &sky);
         log::info!("showroom: {} ({} meshes, {:.1} m long) placed in {:.2} s", r.look.bus, render.instances.len(), length, t0.elapsed().as_secs_f64());
         let _ = std::fs::remove_file(placing_mark());
@@ -650,6 +651,15 @@ mod tests {
     use std::mem::ManuallyDrop;
 
     #[test]
+    fn the_overcast_sky_is_hidden_most_under_the_bus() {
+        let body = Body::of(glam::Vec3::new(0.0, 0.0, 1.5), 2.5, 12.0, 3.0);
+        let under = body.sky_hidden(glam::Vec2::ZERO);
+        let beside = body.sky_hidden(glam::Vec2::new(2.0, 0.0));
+        let far = body.sky_hidden(glam::Vec2::new(SHADE_MARGIN + 1.25, 0.0));
+        assert!(under > 0.8 && beside < under && beside > 0.1 && far < 0.1, "{under} {beside} {far}");
+    }
+
+    #[test]
     fn the_studio_weather_is_clear() {
         let w = studio_weather();
         assert_eq!(w.clouds.0, "-1");
@@ -743,17 +753,18 @@ mod tests {
     }
 }
 
-/// A neutral studio light: the midday sun through a nearly closed thin cloud, as on an
-/// overcast day - most of the light comes evenly from the whole sky and the sun only leaves
-/// a faint soft shadow under the bus - drawn with the player's shading, detail and shadow
-/// switches (no rain or snow).
+/// A neutral studio light as on an overcast day: the light comes evenly from the whole sky,
+/// there is no sun shadow, and the floor darkens softly only where the bus hides the sky
+/// from it - drawn with the player's shading and detail switches (no rain or snow).
 fn lighting_for(args: &Args, weather: &omsi_content::weather::Weather, sky: &crate::weather_setup::SkyState) -> Lighting {
     let settings = crate::settings::Settings::load();
     let clock = start_clock(args);
     let envir = omsi_content::Envir::load(&args.root.join("envir.cfg")).ok();
     let daylight = omsi_sim::Daylight::compute(&clock, envir.as_ref());
     let mut l = weather_lighting(&daylight, weather, crate::weather_setup::cloud_drift_at(weather, clock.time), 0.0, 0.0, settings.shadows, sky);
-    l.shadows = settings.shadows && daylight.altitude_deg > 2.0;
+    // (under a closed cloud nothing casts a shadow of its own: the bus only hides some of the
+    // sky from the floor around it, `add_sky_shade`)
+    l.shadows = false;
     l.enhanced = super::showroom_enhanced(&settings);
     l.detail = settings.detail_textures;
     l.wetness = 0.0;
@@ -767,8 +778,8 @@ fn lighting_for(args: &Args, weather: &omsi_content::weather::Weather, sky: &cra
     l
 }
 
-/// How closed the studio's thin cloud is (0..1): the sun keeps about a third of its light.
-const STUDIO_CLOUD: f32 = 0.85;
+/// How closed the studio's cloud is (0..1): closed, the light comes from the whole sky.
+const STUDIO_CLOUD: f32 = 1.0;
 
 /// A clear sky whatever the duty's weather: no clouds dimming the sun, no snow on the panes.
 fn studio_weather() -> omsi_content::weather::Weather {
@@ -799,6 +810,86 @@ fn add_floor(renderer: &Renderer, scene: &mut Scene) {
     let mesh = renderer.add_mesh(scene, &data);
     let mat = renderer.add_material(scene, None, omsi_render::AlphaMode::Opaque, [0.12, 0.125, 0.135, 1.0], false);
     renderer.add_instance(scene, mesh, DVec3::new(0.0, 0.0, -0.005), glam::Mat4::IDENTITY, vec![mat]);
+}
+
+/// The bus seen from the floor, for the sky light: a box over the ground clearance.
+struct Body {
+    min: glam::Vec3,
+    max: glam::Vec3,
+}
+
+/// Bottom of the body over the floor (m): below it the sky is seen under the bus.
+const CLEARANCE: f32 = 0.3;
+/// How far around the bus the floor's sky is worked out (m).
+const SHADE_MARGIN: f32 = 6.0;
+
+impl Body {
+    fn of(centre: glam::Vec3, width: f32, length: f32, top: f32) -> Body {
+        Body { min: glam::Vec3::new(centre.x - width * 0.5, centre.y - length * 0.5, CLEARANCE), max: glam::Vec3::new(centre.x + width * 0.5, centre.y + length * 0.5, top.max(CLEARANCE + 1.0)) }
+    }
+
+    fn hit(&self, from: glam::Vec3, dir: glam::Vec3) -> bool {
+        let (mut near, mut far) = (0.0f32, f32::INFINITY);
+        for k in 0..3 {
+            if dir[k].abs() < 1e-6 {
+                if from[k] < self.min[k] || from[k] > self.max[k] {
+                    return false;
+                }
+                continue;
+            }
+            let (a, b) = ((self.min[k] - from[k]) / dir[k], (self.max[k] - from[k]) / dir[k]);
+            near = near.max(a.min(b));
+            far = far.min(a.max(b));
+        }
+        near <= far
+    }
+
+    /// The share of an overcast sky's light (even over the sky, falling on the floor by the
+    /// cosine of its height) that the body keeps from a point on the floor.
+    fn sky_hidden(&self, at: glam::Vec2) -> f32 {
+        const N: usize = 16;
+        let from = glam::Vec3::new(at.x, at.y, 0.0);
+        let mut hidden = 0;
+        for i in 0..N {
+            for j in 0..N {
+                // (cosine-weighted directions over the sky, one in each cell of a 16 x 16 grid)
+                let (u, v) = ((i as f32 + 0.5) / N as f32, (j as f32 + 0.5) / N as f32);
+                let (r, a) = (u.sqrt(), std::f32::consts::TAU * v);
+                let dir = glam::Vec3::new(r * a.cos(), r * a.sin(), (1.0 - u).sqrt());
+                hidden += self.hit(from, dir) as usize;
+            }
+        }
+        hidden as f32 / (N * N) as f32
+    }
+}
+
+/// The floor's soft darkening around the bus under the overcast sky: a dark film over the
+/// floor as opaque as the share of the sky the bus hides there.
+fn add_sky_shade(renderer: &Renderer, scene: &mut Scene, centre: glam::Vec3, width: f32, length: f32, top: f32) {
+    let body = Body::of(centre, width, length, top);
+    let (lo, hi) = (body.min.truncate() - glam::Vec2::splat(SHADE_MARGIN), body.max.truncate() + glam::Vec2::splat(SHADE_MARGIN));
+    let step = 0.12;
+    let (w, h) = (((hi.x - lo.x) / step).ceil() as u32, ((hi.y - lo.y) / step).ceil() as u32);
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let at = lo + glam::Vec2::new((x as f32 + 0.5) / w as f32 * (hi.x - lo.x), (y as f32 + 0.5) / h as f32 * (hi.y - lo.y));
+            // (what little is left at the patch's edge fades out over its last metre)
+            let edge = (at - lo).min(hi - at).min_element().clamp(0.0, 1.0);
+            let a = (body.sky_hidden(at) * edge * 255.0).round() as u8;
+            rgba.extend([0, 0, 0, a]);
+        }
+    }
+    let image = omsi_texture::Image { width: w, height: h, rgba, has_alpha: true };
+    let positions = vec![glam::Vec3::new(lo.x, lo.y, 0.0), glam::Vec3::new(hi.x, lo.y, 0.0), glam::Vec3::new(hi.x, hi.y, 0.0), glam::Vec3::new(lo.x, hi.y, 0.0)];
+    let uvs = vec![glam::Vec2::new(0.0, 0.0), glam::Vec2::new(1.0, 0.0), glam::Vec2::new(1.0, 1.0), glam::Vec2::new(0.0, 1.0)];
+    let indices = vec![0, 1, 2, 0, 2, 3];
+    let data = omsi_geometry::MeshData { positions, normals: vec![glam::Vec3::Z; 4], uvs, ranges: vec![(0, 6, 0)], indices, one_sided: false };
+    let mesh = renderer.add_mesh(scene, &data);
+    let texture = renderer.add_texture(scene, &image, false);
+    let mat = renderer.add_material(scene, Some(texture), omsi_render::AlphaMode::Blend, [0.0, 0.0, 0.0, 1.0], true);
+    let i = renderer.add_instance(scene, mesh, DVec3::new(0.0, 0.0, -0.002), glam::Mat4::IDENTITY, vec![mat]);
+    renderer.set_casts_shadow(scene, i, false);
 }
 
 #[cfg(test)]
