@@ -312,7 +312,19 @@ fn mirror_view_in(position: DVec3, rot: glam::Mat4, c: &omsi_vehicle::Camera, ey
     let (y, p) = ((c.yaw + off[0]).to_radians(), (c.pitch + off[1]).to_radians());
     let m = glam::Vec3::new(p.cos() * y.sin(), p.cos() * y.cos(), p.sin());
     let r = d - m * (2.0 * d.dot(m));
-    omsi_vehicle::Camera { yaw: r.x.atan2(r.y).to_degrees(), pitch: r.z.clamp(-1.0, 1.0).asin().to_degrees(), ..c.clone() }
+    omsi_vehicle::Camera { yaw: r.x.atan2(r.y).to_degrees(), pitch: reflexion_pitch(r), ..c.clone() }
+}
+
+/// The pitch (degrees) Omsi.exe gives a mirror's camera looking along `r` (0x7efc60): the
+/// height over the level length of the vector (its height zeroed, 0x567e20), clamped to
+/// [-1, 1], its arcsine (0x45a3d4) - not the vector's own elevation. 30 degrees down is
+/// asin(tan 30) = 35.26 degrees down, 45 degrees and more straight down. (Taking the
+/// elevation, the Lion's City's corner mirror showed the saloon instead of the door and
+/// the kerb under it.)
+fn reflexion_pitch(r: glam::Vec3) -> f32 {
+    let level = r.truncate().length();
+    let s = if level > 0.0 { r.z / level } else { r.z.signum() };
+    s.clamp(-1.0, 1.0).asin().to_degrees()
 }
 
 /// A mirror camera as the player has set it: moved by a shift (bus frame, m) and with
@@ -483,5 +495,22 @@ mod tests {
         assert_eq!(views(&cctv), [(90.0, -40.0); 2]);
         let turned = super::mirror_view_in(DVec3::ZERO, Mat4::IDENTITY, &cctv, DVec3::ZERO, [5.0, -60.0]);
         assert_eq!((turned.yaw, turned.pitch), (95.0, -89.0));
+    }
+
+    /// Omsi.exe pitches a mirror's camera by the arcsine of the reflected ray's height over its
+    /// level length, not by the ray's own elevation: 30 degrees down is 35.26 degrees down, and
+    /// from 45 degrees on it looks straight down.
+    #[test]
+    fn a_mirror_is_pitched_by_height_over_level_length() {
+        let along = |deg: f32| {
+            let e = deg.to_radians();
+            super::reflexion_pitch(glam::Vec3::new(0.6 * e.cos(), -0.8 * e.cos(), e.sin()))
+        };
+        assert!(along(0.0).abs() < 1e-4);
+        assert!((along(-30.0) + 35.26).abs() < 0.01, "{}", along(-30.0));
+        assert!((along(20.0) - 21.34).abs() < 0.01, "{}", along(20.0));
+        assert!((along(-45.5) + 90.0).abs() < 1e-3);
+        assert!((along(-70.0) + 90.0).abs() < 1e-3);
+        assert!((super::reflexion_pitch(glam::Vec3::Z) - 90.0).abs() < 1e-3);
     }
 }
