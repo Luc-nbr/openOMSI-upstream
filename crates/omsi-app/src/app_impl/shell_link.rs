@@ -62,6 +62,8 @@ impl App {
         let dpi = self.window.as_ref().map(|w| w.scale_factor() as f32).unwrap_or(1.0);
         let scale = dpi * ui::size_factor(h, dpi, self.settings.ui_scale, self.settings.ui_scale_window);
         let rail = self.game_menu_items();
+        // (an icon the game does not have: the plugins' own)
+        let plugin_icons = self.plugin_menu_lines().iter().map(|m| m.icon.as_deref().and_then(|i| omsi_ui::icons::names().find(|n| *n == i.trim())).unwrap_or("extension")).collect();
         let tabs = match self.menus.list_kind.as_ref() {
             Some(k) if self.menus.chooser.is_some() => crate::game_lists::page_titles(self, k),
             _ => None,
@@ -83,6 +85,7 @@ impl App {
         let view = PauseView {
             paused: self.paused,
             rail: &rail,
+            plugin_icons,
             rail_sel: self.menus.game_menu,
             rail_open: self.menus.list_kind.as_ref().and_then(|k| rail_of(k, camera_tab)).filter(|_| self.menus.chooser.is_some()),
             list,
