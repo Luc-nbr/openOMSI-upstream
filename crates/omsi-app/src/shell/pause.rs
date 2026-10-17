@@ -45,9 +45,7 @@ pub(crate) struct ListView<'a> {
 pub(crate) struct PauseView<'a> {
     pub paused: bool,
     /// The game menu's lines.
-    pub rail: &'a [(&'static str, Cow<'static, str>)],
-    /// The icons of its plugins' lines (`"plugin"`), in their order.
-    pub plugin_icons: Vec<&'static str>,
+    pub rail: &'a [crate::app_impl::MenuLine],
     /// The line the keyboard is on (the game menu's, while no list is open).
     pub rail_sel: Option<usize>,
     /// The line of the rail the open list belongs to.
@@ -139,7 +137,7 @@ fn rail(sh: &mut Shell, v: &PauseView) {
     let state = omsi_ui::tr(if v.paused { "Paused" } else { "Menu" }).into_owned();
     ui.text(&format!("{}  -  {state}", crate::startup::VERSION), Vec2::new(58.0, 46.0), 11.5, Weight::Medium, INK_MUTED, Align::Left);
     // the items
-    let lines: Vec<(usize, &str, &str)> = v.rail.iter().enumerate().map(|(k, l)| (k, l.0, l.1.as_ref())).collect();
+    let lines: Vec<(usize, &str, &str, Option<&omsi_plugin::ui::MenuItem>)> = v.rail.iter().enumerate().map(|(k, l)| (k, l.0, l.1.as_ref(), l.2.as_ref())).collect();
     let top = 70.0;
     let foot = 12.0 + 56.0 + 10.0;
     let area = Rect::new(0.0, top, RAIL_W, (size.y - top - foot).max(42.0));
@@ -148,20 +146,19 @@ fn rail(sh: &mut Shell, v: &PauseView) {
     let mut sel_y: Option<f32> = None;
     ui.scroll_area("pause-rail", area, &mut |ui, view| {
         let mut y = view.y;
-        let mut plugin = 0;
-        for &(k, id, label) in &lines {
+        let mut last = "";
+        for &(k, id, label, line) in &lines {
             // room between the groups (the everyday lines, the plugins', saving, the way
             // out), as the launcher's `nav-sep`
-            if matches!(id, "save" | "admin" | "quit") || (id == "plugin" && plugin == 0) {
+            if matches!(id, "save" | "admin" | "quit") || (id == "plugin" && last != "plugin") {
                 y += 10.0;
             }
-            // (a plugin's line: its own icon and label, and a key of its own for the hover)
-            let (icon, key) = match id {
-                "plugin" => {
-                    plugin += 1;
-                    (v.plugin_icons.get(plugin - 1).copied().unwrap_or("extension"), format!("plugin{plugin}"))
-                }
-                _ => (rail_icon(id), id.to_string()),
+            last = id;
+            // (a plugin's line: its own icon - the plugins' one for an icon the game does not
+            // have - and a key of its own for the hover)
+            let (icon, key) = match line {
+                Some(m) => (m.icon.as_deref().and_then(|i| omsi_ui::icons::names().find(|n| *n == i.trim())).unwrap_or("extension"), format!("plugin-{}-{}", m.owner, m.id)),
+                None => (rail_icon(id), id.to_string()),
             };
             let row = Rect::new(12.0, y, RAIL_W - 24.0, 38.0);
             let (h, _, clicked) = ui.interact(id_of(&format!("pause-{key}")), row);

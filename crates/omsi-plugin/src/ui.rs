@@ -388,7 +388,9 @@ impl UiState {
     /// Put a line in the pause menu, or change the plugin's line `id`.
     pub fn set_menu_item(&mut self, owner: u64, id: &str, label: &str, icon: Option<String>) -> Result<(), String> {
         check_id("the line's id", id)?;
-        let label = label.trim();
+        // (one line of text: a line break or another control character is a space)
+        let label = label.split(|c: char| c.is_control() || c.is_whitespace()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+        let label = label.as_str();
         if label.is_empty() {
             return Err("the label is empty".into());
         }
@@ -1172,9 +1174,9 @@ mod tests {
         }
         assert!(ui.set_menu_item(1, "one too many", "A line", None).unwrap_err().contains("3 lines"));
         // changing one is no new line, another plugin has its own
-        ui.set_menu_item(1, "m0", "  Renamed  ", Some(" ".into())).unwrap();
+        ui.set_menu_item(1, "m0", "  Re\nnamed\t ", Some(" ".into())).unwrap();
         ui.set_menu_item(2, "m0", "Other", Some("map".into())).unwrap();
-        assert_eq!(ui.menu_items()[0], MenuItem { owner: 1, id: "m0".into(), label: "Renamed".into(), icon: None });
+        assert_eq!(ui.menu_items()[0], MenuItem { owner: 1, id: "m0".into(), label: "Re named".into(), icon: None });
         assert!(ui.set_menu_item(2, "long", &"x".repeat(MAX_MENU_LABEL + 1), None).is_err());
         // a choice goes to its plugin only, once
         ui.pick_menu_item(2, "m0");
