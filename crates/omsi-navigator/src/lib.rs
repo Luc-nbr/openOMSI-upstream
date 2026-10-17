@@ -1274,6 +1274,7 @@ pub use omsi_mapdraw as mapmesh;
 mod panel;
 mod live;
 mod build;
+pub use build::{Built, MapGround};
 mod city_map;
 pub use city_map::*;
 #[cfg(test)]

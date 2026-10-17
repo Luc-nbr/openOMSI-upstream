@@ -244,6 +244,14 @@ pub fn overview(look: Look) -> serde_json::Value {
     })
 }
 
+/// The map's network and layers for the launcher's map (`omsi_navigator::MapGround`), and the
+/// world point the page measures from (`export`'s `origin`).
+pub fn map_network(map: &str, global: &Path, date: &str) -> (DVec2, Arc<Network>, Option<Arc<omsi_map::layers::Layers>>) {
+    let look = Look { map: map.to_string(), global: global.to_path_buf(), date: date.to_string(), trip: String::new(), entry: -1 };
+    let roads = read_map(&look);
+    (roads.origin, roads.net, roads.layers)
+}
+
 /// The map's own data, read the way the game reads it for its city map: every tile's paths
 /// (splines and the crossings' objects), linked, grouped into carriageways with their real
 /// widths. `look.global` is the map's `global.cfg`; the tiles stand beside it and the assets

@@ -1,8 +1,11 @@
-// The route preview, drawn as the game's own city map draws it (read by the game program,
-// `route_map`): the map's ground, water, woods and houses (its layers, `d.layers`), every paved
-// surface and road, the trip's route in blue on the very lanes the game drives, its stops with
+// The route preview. Its ground is the game's own city map: the game program builds it with
+// the city map's code and palette (`map_ground`, `omsi_navigator::MapGround`) and it is drawn
+// here as the game draws it, with WebGL - the land, water and woods, every paved surface and
+// carriageway, the tracks and the houses, their details coming and going at the city map's
+// scales. Over it the trip's route in blue on the very lanes the game drives, its stops with
 // their times, and the entry points - one clicked is where the bus starts. Dragged to move,
-// the wheel to zoom where the mouse is.
+// the wheel to zoom where the mouse is, eased as the game's map eases. (Without WebGL, or a
+// game program that does not build the ground, the page draws the map's layers itself.)
 
 import { html, useEffect, useRef, useState } from '../vendor/preact-htm.js';
 import { call } from './api.js';
@@ -225,6 +228,91 @@ function drawLayers(g, l, v, W, H) {
   g.restore();
 }
 
+// --- The ground as the game builds it (`map_ground`)
+
+/** The city map's ground around `at` (metres from the page's origin) at `mpp`: the head and
+ * the vertices (28 bytes each, see `map_ground` in the game's launcher service). */
+async function readGround(map, date, at, reach, mpp, light) {
+  const buf = await call('map_ground', { map, date, x: at[0], y: at[1], reach, mpp, light });
+  const n = new DataView(buf).getUint32(0, true);
+  const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, n)));
+  return { head, verts: buf.slice(4 + n) };
+}
+
+// the game's own vertex rule (omsi-ui's `ui.wgsl`): a vertex moves out along its extrusion
+// by the larger of its width in metres and its width in pixels at this scale
+const VS = `attribute vec2 p; attribute vec2 e; attribute vec2 w; attribute vec4 c;
+uniform vec2 centre; uniform float mpp; uniform vec2 hsize;
+varying vec4 v;
+void main() {
+  vec2 q = p + e * max(w.x, w.y * mpp);
+  gl_Position = vec4((q - centre) / mpp / hsize, 0.0, 1.0);
+  v = c;
+}`;
+const FS = `precision mediump float; varying vec4 v; void main() { gl_FragColor = vec4(v.rgb * v.a, v.a); }`;
+
+/** A WebGL picture of the ground on `canvas`; none where the browser has no WebGL. */
+function groundGl(canvas) {
+  const gl = canvas.getContext('webgl', { antialias: true, premultipliedAlpha: true, alpha: false });
+  if (!gl) return null;
+  const sh = (type, src) => {
+    const o = gl.createShader(type);
+    gl.shaderSource(o, src);
+    gl.compileShader(o);
+    return o;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+  const at = (n) => gl.getAttribLocation(prog, n);
+  const un = (n) => gl.getUniformLocation(prog, n);
+  return { gl, prog, buf: gl.createBuffer(), a: { p: at('p'), e: at('e'), w: at('w'), c: at('c') }, u: { centre: un('centre'), mpp: un('mpp'), hsize: un('hsize') }, count: 0 };
+}
+
+/** Upload a ground the game built. */
+function uploadGround(g, ground) {
+  const { gl } = g;
+  gl.bindBuffer(gl.ARRAY_BUFFER, g.buf);
+  gl.bufferData(gl.ARRAY_BUFFER, ground.verts, gl.STATIC_DRAW);
+  g.count = ground.verts.byteLength / 28;
+  g.anchor = ground.head.anchor;
+}
+
+/** Draw the uploaded ground with the view `v` (centre and metres a pixel) on a W x H page. */
+function drawGround(g, v, W, H, dpr, land) {
+  const { gl, a, u } = g;
+  gl.viewport(0, 0, Math.round(W * dpr), Math.round(H * dpr));
+  const [r, gr, b] = land;
+  gl.clearColor(r, gr, b, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  if (!g.count) return;
+  gl.useProgram(g.prog);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  gl.bindBuffer(gl.ARRAY_BUFFER, g.buf);
+  gl.enableVertexAttribArray(a.p);
+  gl.vertexAttribPointer(a.p, 2, gl.FLOAT, false, 28, 0);
+  gl.enableVertexAttribArray(a.e);
+  gl.vertexAttribPointer(a.e, 2, gl.FLOAT, false, 28, 8);
+  gl.enableVertexAttribArray(a.w);
+  gl.vertexAttribPointer(a.w, 2, gl.FLOAT, false, 28, 16);
+  gl.enableVertexAttribArray(a.c);
+  gl.vertexAttribPointer(a.c, 4, gl.UNSIGNED_BYTE, true, 28, 24);
+  gl.uniform2f(u.centre, v.cx - g.anchor[0], v.cy - g.anchor[1]);
+  gl.uniform1f(u.mpp, v.mpp);
+  gl.uniform2f(u.hsize, W / 2, H / 2);
+  gl.drawArrays(gl.TRIANGLES, 0, g.count);
+}
+
+/** `rgba(r,g,b,a)` as 0..1 numbers. */
+const rgb = (css) => (css?.match(/[\d.]+/g) || [0, 0, 0]).slice(0, 3).map((x) => x / 255);
+
+/** The city map's level of detail at `mpp` (`city_ground`'s scales): a new ground is built
+ * when it changes. */
+const detail = (mpp) => (mpp < 0.7 ? 1 : 0) | (mpp < 2.2 ? 2 : 0) | (mpp < 3.5 ? 4 : 0) | (mpp < 6 ? 8 : 0);
+
 const surfaces = new Map();
 let drawn = 0;
 
@@ -291,14 +379,47 @@ function drawRoads(g, d, v, W, H) {
   g.restore();
 }
 
+/** The view that shows `d`: the trip's route when there is one, else the map, framed in the
+ * part of the W x H page `inset` leaves free. */
+function fit(d, W, H, inset, el) {
+  let lo = d.lo;
+  let hi = d.hi;
+  if (d.route.length) {
+    lo = [Infinity, Infinity];
+    hi = [-Infinity, -Infinity];
+    for (const p of d.route) for (let i = 0; i < p.length; i += 2) {
+      lo = [Math.min(lo[0], p[i]), Math.min(lo[1], p[i + 1])];
+      hi = [Math.max(hi[0], p[i]), Math.max(hi[1], p[i + 1])];
+    }
+  }
+  const k = inset?.(el) || { l: 0, t: 0, r: 0, b: 0 };
+  const fw = Math.max(W - k.l - k.r, W / 3);
+  const fh = Math.max(H - k.t - k.b, H / 3);
+  const span = Math.max((hi[0] - lo[0]) / Math.max(fw - (inset ? 220 : 80), fw / 2), (hi[1] - lo[1]) / Math.max(fh - (inset ? 90 : 60), fh / 2), 0.2);
+  const ox = Math.min(k.l, W - fw) + fw / 2 - W / 2;
+  const oy = Math.min(k.t, H - fh) + fh / 2 - H / 2;
+  return { cx: (lo[0] + hi[0]) / 2 - ox * span, cy: (lo[1] + hi[1]) / 2 + oy * span, mpp: span };
+}
+
+const MIN_MPP = 0.15;
+const MAX_MPP = 200;
+
 export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, height = 340, inset }) {
   const box = useRef();
   const cv = useRef();
+  const gcv = useRef();
   const [data, setData] = useState(null);
+  // the view drawn now, and the one it eases to (the game's map eases its zoom the same way)
   const view = useRef(null);
+  const aim = useRef(null);
+  const refit = useRef(false);
   const base = useRef(null);
   const settle = useRef(0);
+  const frame = useRef(0);
   const [hover, setHover] = useState(-1);
+  // the ground the game built (null: not asked yet, false: this browser or game cannot)
+  const gl = useRef(null);
+  const ground = useRef({ built: null, asking: null, failed: false });
 
   useEffect(() => {
     if (!map) return;
@@ -308,12 +429,48 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
       if (!alive) return;
       const now = surfaceNow.get(`${map}|${date}`);
       setData(d.error ? d : withSurface(d, now));
-      view.current = null;
+      // (a new trip: the view flies to it rather than jumping)
+      refit.current = true;
       if (d.error || now) return;
       surface.then((s) => alive && s && setData((cur) => (cur && !cur.error ? withSurface(cur, s) : cur)));
     });
     return () => (alive = false);
   }, [map, date, trip]);
+
+  // a new map: its own ground
+  useEffect(() => {
+    ground.current = { built: null, asking: null, failed: false };
+    if (gl.current) gl.current.count = 0;
+  }, [map, date]);
+
+  /** Ask the game for the ground around the view when the one there is does not cover it,
+   * or is of another level of detail - as the city map asks for its own. */
+  const wantGround = (v, W, H, light) => {
+    const G = ground.current;
+    if (G.failed || G.asking || !map) return;
+    const reach = Math.max(500, Math.max(W, H) * v.mpp * 0.8);
+    const b = G.built;
+    const fresh = b && b.light === light && detail(b.mpp) === detail(v.mpp) && Math.hypot(b.at[0] - v.cx, b.at[1] - v.cy) <= b.reach * 0.35 && b.mpp / v.mpp <= 1.7 && v.mpp / b.mpp <= 1.7;
+    if (fresh) return;
+    const ask = { at: [v.cx, v.cy], reach, mpp: v.mpp, light };
+    G.asking = ask;
+    readGround(map, date, ask.at, reach, v.mpp, light).then(
+      (got) => {
+        if (ground.current !== G) return;
+        G.asking = null;
+        if (gl.current) uploadGround(gl.current, got);
+        G.built = ask;
+        G.palette = got.head.palette;
+        latest.current();
+      },
+      () => {
+        if (ground.current !== G) return;
+        G.asking = null;
+        G.failed = true;
+        latest.current();
+      },
+    );
+  };
 
   // the picture, drawn again whenever anything it shows changes
   const draw = (fast = false) => {
@@ -321,53 +478,60 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
     const d = data;
     if (!c || !d || d.error) return;
     const dpr = window.devicePixelRatio || 1;
-    LOOK = document.documentElement.dataset.theme === 'light' ? LOOKS.light : LOOKS.dark;
+    const light = document.documentElement.dataset.theme === 'light';
+    LOOK = light ? LOOKS.light : LOOKS.dark;
     const W = box.current.clientWidth;
     const H = box.current.clientHeight;
-    if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) Object.assign(c, { width: Math.round(W * dpr), height: Math.round(H * dpr) });
+    if (!W || !H) return;
+    for (const el of [c, gcv.current]) {
+      if (el && (el.width !== Math.round(W * dpr) || el.height !== Math.round(H * dpr))) Object.assign(el, { width: Math.round(W * dpr), height: Math.round(H * dpr) });
+    }
     if (!view.current) {
-      // the trip's own route when there is one, else the map
-      let lo = d.lo;
-      let hi = d.hi;
-      if (d.route.length) {
-        lo = [Infinity, Infinity];
-        hi = [-Infinity, -Infinity];
-        for (const p of d.route) for (let i = 0; i < p.length; i += 2) {
-          lo = [Math.min(lo[0], p[i]), Math.min(lo[1], p[i + 1])];
-          hi = [Math.max(hi[0], p[i]), Math.max(hi[1], p[i + 1])];
-        }
-      }
-      const k = inset?.(box.current) || { l: 0, t: 0, r: 0, b: 0 };
-      const fw = Math.max(W - k.l - k.r, W / 3);
-      const fh = Math.max(H - k.t - k.b, H / 3);
-      const span = Math.max((hi[0] - lo[0]) / Math.max(fw - (inset ? 220 : 80), fw / 2), (hi[1] - lo[1]) / Math.max(fh - (inset ? 90 : 60), fh / 2), 0.2);
-      const ox = Math.min(k.l, W - fw) + fw / 2 - W / 2;
-      const oy = Math.min(k.t, H - fh) + fh / 2 - H / 2;
-      view.current = { cx: (lo[0] + hi[0]) / 2 - ox * span, cy: (lo[1] + hi[1]) / 2 + oy * span, mpp: span };
+      view.current = fit(d, W, H, inset, box.current);
+      aim.current = { ...view.current };
+      refit.current = false;
+    } else if (refit.current) {
+      refit.current = false;
+      aim.current = fit(d, W, H, inset, box.current);
+      aim.current.zoomAt = null;
+      animate();
     }
     const v = view.current;
-    const key = `${d.id}|${W}x${H}@${dpr}|${LOOK === LOOKS.light}`;
-    const b = base.current;
-    const moved = !b || b.view.cx !== v.cx || b.view.cy !== v.cy || b.view.mpp !== v.mpp;
-    if (!b || b.key !== key || (moved && fast !== true)) {
-      const canvas = b?.canvas || document.createElement('canvas');
-      Object.assign(canvas, { width: Math.round(W * dpr), height: Math.round(H * dpr) });
-      const bg = canvas.getContext('2d');
-      bg.setTransform(dpr, 0, 0, dpr, 0, 0);
-      bg.fillStyle = LOOK.land;
-      bg.fillRect(0, 0, W, H);
-      if (d.package) drawSurface(bg, d.package, v, W, H);
-      if (d.layers) drawLayers(bg, d.layers, v, W, H);
-      drawRoads(bg, d, v, W, H);
-      base.current = { canvas, key, view: { ...v } };
-    }
+    if (gl.current === null && gcv.current) gl.current = groundGl(gcv.current) || false;
+    const G = ground.current;
+    const onGl = !!gl.current && !G.failed;
     const g = c.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = LOOK.land;
-    g.fillRect(0, 0, W, H);
-    const bv = base.current.view;
-    const k = bv.mpp / v.mpp;
-    g.drawImage(base.current.canvas, W / 2 + (bv.cx - v.cx) / v.mpp - (W / 2) * k, H / 2 - (bv.cy - v.cy) / v.mpp - (H / 2) * k, W * k, H * k);
+    if (onGl) {
+      wantGround(v, W, H, light);
+      drawGround(gl.current, v, W, H, dpr, rgb(G.palette?.land || LOOK.land));
+      g.clearRect(0, 0, W, H);
+    } else {
+      // (the page's own drawing of the map's layers, when the game builds no ground)
+      const key = `${d.id}|${W}x${H}@${dpr}|${light}`;
+      const b = base.current;
+      const moved = !b || b.view.cx !== v.cx || b.view.cy !== v.cy || b.view.mpp !== v.mpp;
+      if (!b || b.key !== key || (moved && fast !== true)) {
+        const canvas = b?.canvas || document.createElement('canvas');
+        Object.assign(canvas, { width: Math.round(W * dpr), height: Math.round(H * dpr) });
+        const bg = canvas.getContext('2d');
+        bg.setTransform(dpr, 0, 0, dpr, 0, 0);
+        bg.fillStyle = LOOK.land;
+        bg.fillRect(0, 0, W, H);
+        if (d.package) drawSurface(bg, d.package, v, W, H);
+        if (d.layers) drawLayers(bg, d.layers, v, W, H);
+        drawRoads(bg, d, v, W, H);
+        base.current = { canvas, key, view: { ...v } };
+      }
+      g.fillStyle = LOOK.land;
+      g.fillRect(0, 0, W, H);
+      const bv = base.current.view;
+      const k = bv.mpp / v.mpp;
+      g.drawImage(base.current.canvas, W / 2 + (bv.cx - v.cx) / v.mpp - (W / 2) * k, H / 2 - (bv.cy - v.cy) / v.mpp - (H / 2) * k, W * k, H * k);
+    }
+    // the route and the cards in the game's colours where it gave them
+    const P = (onGl && G.palette) || null;
+    const routeColor = P?.route || LOOK.route;
     const X = (x) => W / 2 + (x - v.cx) / v.mpp;
     const Y = (y) => H / 2 - (y - v.cy) / v.mpp;
     const line = (p) => {
@@ -375,7 +539,7 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
       for (let i = 0; i < p.length; i += 2) (i ? g.lineTo : g.moveTo).call(g, X(p[i]), Y(p[i + 1]));
     };
     g.lineCap = g.lineJoin = 'round';
-    for (const [color, wide] of [[LOOK.routeEdge, 7], [LOOK.route, 4.6]]) {
+    for (const [color, wide] of [[P?.route_edge || LOOK.routeEdge, 7], [routeColor, 4.6]]) {
       g.strokeStyle = color;
       g.lineWidth = wide;
       for (const p of d.route) {
@@ -395,7 +559,7 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
       g.beginPath();
       g.arc(x, y, 5.5, 0, Math.PI * 2);
       g.fill();
-      g.fillStyle = LOOK.route;
+      g.fillStyle = routeColor;
       g.beginPath();
       g.arc(x, y, 3.6, 0, Math.PI * 2);
       g.fill();
@@ -409,14 +573,14 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
         g.save();
         g.shadowColor = LOOK.cardShadow;
         g.shadowBlur = 6;
-        g.fillStyle = LOOK.card;
+        g.fillStyle = P?.card || LOOK.card;
         g.beginPath();
         g.roundRect(lx, y - 10, w, 20, 7);
         g.fill();
         g.restore();
-        g.fillStyle = LOOK.route;
+        g.fillStyle = routeColor;
         g.fillText(plain(st.time), lx + 7, y + 4);
-        g.fillStyle = LOOK.text;
+        g.fillStyle = P?.card_text || LOOK.text;
         g.fillText(plain(st.name), lx + 7 + g.measureText(`${st.time}  `).width, y + 4);
       }
     }
@@ -433,7 +597,7 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
       g.arc(x, y, 3.8, 0, Math.PI * 2);
       g.fill();
       if (i === hover || e.index === entry) {
-        g.strokeStyle = e.index === entry ? LOOK.route : '#8e8e93';
+        g.strokeStyle = e.index === entry ? routeColor : '#8e8e93';
         g.lineWidth = 2;
         g.beginPath();
         g.arc(x, y, e.index === entry ? 10 : 7.5, 0, Math.PI * 2);
@@ -454,8 +618,45 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
   };
   const latest = useRef(draw);
   latest.current = draw;
+
+  /** Ease the view to `aim` frame by frame (a zoom keeps the point under the mouse where it
+   * is, as the city map's wheel does), then draw it once more in full. */
+  const animate = () => {
+    if (frame.current) return;
+    let last = performance.now();
+    const step = (now) => {
+      const v = view.current;
+      const a = aim.current;
+      if (!v || !a) return (frame.current = 0);
+      const k = 1 - Math.exp(-Math.min(now - last, 100) / 1000 * 14);
+      last = now;
+      const mpp = Math.exp(Math.log(v.mpp) + (Math.log(a.mpp) - Math.log(v.mpp)) * k);
+      if (a.zoomAt) {
+        const { px, py, wx, wy, W, H } = a.zoomAt;
+        v.mpp = mpp;
+        v.cx = wx - (px - W / 2) * mpp;
+        v.cy = wy + (py - H / 2) * mpp;
+      } else {
+        v.mpp = mpp;
+        v.cx += (a.cx - v.cx) * k;
+        v.cy += (a.cy - v.cy) * k;
+      }
+      const done = Math.abs(Math.log(v.mpp / a.mpp)) < 0.002 && (a.zoomAt || Math.hypot(a.cx - v.cx, a.cy - v.cy) < v.mpp * 0.3);
+      if (done) {
+        v.mpp = a.mpp;
+        if (!a.zoomAt) [v.cx, v.cy] = [a.cx, a.cy];
+        frame.current = 0;
+        latest.current();
+        return;
+      }
+      latest.current(true);
+      frame.current = requestAnimationFrame(step);
+    };
+    frame.current = requestAnimationFrame(step);
+  };
+
   useEffect(() => draw(), [data, hover, entry, stops.map((x) => `${x.time} ${x.name}`).join('|')]);
-  useEffect(() => () => clearTimeout(settle.current), []);
+  useEffect(() => () => (clearTimeout(settle.current), cancelAnimationFrame(frame.current)), []);
   useEffect(() => {
     const redraw = () => latest.current();
     const ro = new ResizeObserver(redraw);
@@ -495,6 +696,10 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
   return html`<div class="routemap" ref=${box} style=${height ? `height:${height}px` : ''}
       onPointerDown=${(e) => {
         drag.current = { p: at(e), moved: 0 };
+        // (a drag takes the map where it is: an easing in progress stops there)
+        cancelAnimationFrame(frame.current);
+        frame.current = 0;
+        if (view.current) aim.current = { ...view.current, zoomAt: null };
         e.currentTarget.setPointerCapture(e.pointerId);
       }}
       onPointerMove=${(e) => {
@@ -507,6 +712,7 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
           d.p = p;
           view.current.cx -= dx * view.current.mpp;
           view.current.cy += dy * view.current.mpp;
+          aim.current = { ...view.current, zoomAt: null };
           draw(true);
         } else {
           const h = entryAt(p);
@@ -530,16 +736,16 @@ export function RouteMap({ map, date, trip, stops = [], entry = -1, onEntry, hei
         const [px, py] = at(e);
         const W = box.current.clientWidth;
         const H = box.current.clientHeight;
+        // the point under the mouse stays there; a trackpad's small steps zoom little
+        const a = aim.current?.zoomAt ? aim.current : { ...v };
         const wx = v.cx + (px - W / 2) * v.mpp;
         const wy = v.cy - (py - H / 2) * v.mpp;
-        v.mpp = Math.min(Math.max(v.mpp * (e.deltaY > 0 ? 1.15 : 1 / 1.15), 0.15), 200);
-        v.cx = wx - (px - W / 2) * v.mpp;
-        v.cy = wy + (py - H / 2) * v.mpp;
-        draw(true);
-        clearTimeout(settle.current);
-        settle.current = setTimeout(() => latest.current(), 160);
+        const k = Math.exp(Math.max(-1, Math.min(1, e.deltaY * (e.deltaMode ? 0.05 : 0.0025))) * 0.6);
+        aim.current = { cx: v.cx, cy: v.cy, mpp: Math.min(Math.max(a.mpp * k, MIN_MPP), MAX_MPP), zoomAt: { px, py, wx, wy, W, H } };
+        animate();
       }}>
-    <canvas ref=${cv}></canvas>
+    <canvas ref=${gcv} class="ground"></canvas>
+    <canvas ref=${cv} class="over"></canvas>
     ${!data && html`<div class="state"><${Spinner} /> ${t('Reading the map…')}</div>`}
     ${data?.error && html`<div class="state">${data.error}</div>`}
     ${data?.package?.credit && html`<div class="credit">${data.package.credit}</div>`}
