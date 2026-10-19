@@ -183,6 +183,11 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
         switch_row(app, "driver", "Driver at the wheel (outside views)", "Shows the driver in the outside views and in the mirrors"),
         switch_row(app, "headtrack", "Head tracking (native TrackIR / OpenTrack)", &omsi_ui::tr("Use native TrackIR on Windows, or OpenTrack on UDP port {}")
             .into_owned().replace("{}", &s.head_tracking_port.to_string())),
+        // (a Tobii eye tracker read natively: its source, its look at the edges, its smoothing)
+        pick("head_tracking_source", "Head tracking with", "Automatic: opentrack while it sends, else a Tobii eye tracker (Windows, with the Tobii Experience installed)").filter(|_| s.head_tracking),
+        switch_row(app, "tobii_edges", "Look further at the screen's edges (Tobii)", "A look at the left or right edge of the screen turns the view further that way").filter(|_| s.head_tracking && s.head_tracking_source != "opentrack"),
+        slider_row(app, "head_tracking_smoothing", "Smoothing", "Steadies the view against the tracker's trembling; big turns still follow at once (0 %: it only glides between the tracker's poses). For opentrack, choose its Accela filter there", &pct).filter(|_| s.head_tracking && s.head_tracking_source != "opentrack"),
+        slider_row(app, "head_tracking_dead_zone", "Dead zone", "Head movements smaller than this leave the view where it is, wherever you look", &|v| format!("{v:.2}°")).filter(|_| s.head_tracking && s.head_tracking_source != "opentrack"),
         slider_row(app, "head_tracking_yaw_sens", "TrackIR yaw sensitivity", "Left / right head movement. 100% is 1:1; the low end is deliberately finer.", &|v| format!("{v:.0}%")),
         slider_row(app, "head_tracking_pitch_sens", "TrackIR pitch sensitivity", "Up / down head movement. 100% is 1:1; the low end is deliberately finer.", &|v| format!("{v:.0}%")),
         slider_row(app, "head_tracking_roll_sens", "TrackIR roll sensitivity", "Head tilt. 100% is 1:1; the low end is deliberately finer.", &|v| format!("{v:.0}%")),

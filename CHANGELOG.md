@@ -93,6 +93,17 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 - Driving off the road soils the bus: the wheels on earth, grass or gravel throw it up onto
   the body (the dirt overlay), mud in the wet in a few minutes, dust in the dry more slowly.
 
+**Head tracking**
+
+- Tobii eye trackers (the Eye Tracker 5, the 4C, the ones built into laptops) track the head
+  natively on Windows, without opentrack: the game reads the Tobii Experience's own Stream
+  Engine (`Head tracking with`: Automatic takes opentrack while it sends, else the Tobii).
+  F1 takes where the head is as the middle. The tracker's trembling is smoothed away while
+  big turns still follow at once (the `Smoothing` and `Dead zone` settings), and a look at
+  the screen's left or right edge can turn the view further (`Look further at the screen's
+  edges`). Every tracker's poses are drawn frame by frame, and a lost tracker glides the
+  view home instead of snapping it there.
+
 **Launcher**
 
 - The Drive page puts the map, the line and tour, the roadbook, the bus and the start on one

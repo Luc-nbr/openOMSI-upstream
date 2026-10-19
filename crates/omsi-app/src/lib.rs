@@ -19,7 +19,7 @@ use omsi_platform::discord;
 mod steam;
 use omsi_lan::voice;
 pub(crate) use omsi_scene::head_idle;
-use omsi_input::headtrack;
+use omsi_input::{head_filter, headtrack, tobii};
 #[cfg(windows)]
 use omsi_xr::openxr;
 #[cfg(target_os = "android")]
@@ -803,6 +803,7 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
             pad_voice_radio: false,
             arrow_glance: false,
             headtrack: None,
+            head_filter: Default::default(),
             headtrack_failed: None,
             headtrack_scale_last: None,
             headtrack_scale_bias: [0.0; 6],
