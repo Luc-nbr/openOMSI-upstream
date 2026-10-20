@@ -23,7 +23,7 @@ pub struct CityMap {
     pub(super) center: DVec2,
     pub(super) mpp: f64,
     /// The view stays on the bus until the map is dragged.
-    follow: bool,
+    pub(super) follow: bool,
     pub(super) drag: Option<(f32, f32)>,
     /// How far the mouse has moved (pixels) since it was pressed on the map: a press let go
     /// without moving is a click.
@@ -38,11 +38,16 @@ pub struct CityMap {
     extent: (DVec2, DVec2),
     /// The buttons (window pixels): 0 centre on the bus, 1 zoom in, 2 zoom out, 3 close,
     /// 4 2D / 3D.
-    buttons: Vec<(Rect, u8)>,
+    pub(super) buttons: Vec<(Rect, u8)>,
+    /// The lines panel: which lines are ticked and what is on show.
+    pub(super) lines: LinesView,
     /// The houses stand up when zoomed in (starts as the `nav_3d` setting; the 2D/3D button).
     pub(super) three_d: Option<bool>,
     /// How far the view is tilted into 3D (0 flat … 1), eased.
     tilt: f32,
+    /// The turn of the view (radians): the map direction that points up on the screen lies this far clockwise from the
+    /// map's up. Eased.
+    pub(super) phi: f64,
 }
 
 /// A city map ground being built: what for.
@@ -66,7 +71,7 @@ struct CityGround {
 }
 
 /// The city map's camera: its view-projection (relative to `centre`) and its inverse.
-struct CityCam {
+pub(super) struct CityCam {
     vp: Mat4,
     inv: Mat4,
 }
@@ -272,12 +277,15 @@ impl Navigator {
 
     /// The camera at `mpp` with the view `tilt`ed, looking at `centre` (relative to it), for a
     /// window of `w` x `h` pixels: north up.
-    fn city_cam(mpp: f64, tilt: f32, w: f32, h: f32) -> CityCam {
+    pub(super) fn city_cam(mpp: f64, tilt: f32, phi: f64, w: f32, h: f32) -> CityCam {
         let t = (CITY_FOV.to_radians() * 0.5).tan();
         let dist = (mpp * h as f64 / (2.0 * t as f64)) as f32;
         let pitch = (90.0 - 40.0 * tilt).to_radians();
         let eye = Vec3::new(0.0, -dist * pitch.cos(), dist * pitch.sin());
         let up = Vec3::new(0.0, pitch.sin(), pitch.cos());
+        // (the view turned: the camera goes round the vertical axis)
+        let turn = Mat3::from_rotation_z(-phi as f32);
+        let (eye, up) = (turn * eye, turn * up);
         let view = Mat4::look_at_rh(eye, Vec3::ZERO, up);
         let proj = Mat4::perspective_rh(CITY_FOV.to_radians(), w / h.max(1.0), (dist * 0.02).max(0.5), dist * 6.0 + 4000.0);
         let vp = proj * view;
@@ -286,7 +294,7 @@ impl Navigator {
 
     /// The ground point under a window point (pixels from the map's top left), relative to the
     /// view's centre.
-    fn unproject(cam: &CityCam, w: f32, h: f32, x: f32, y: f32) -> Option<DVec2> {
+    pub(super) fn unproject(cam: &CityCam, w: f32, h: f32, x: f32, y: f32) -> Option<DVec2> {
         let ndc = Vec2::new(x / w * 2.0 - 1.0, 1.0 - y / h * 2.0);
         let a = cam.inv.project_point3(ndc.extend(0.0));
         let b = cam.inv.project_point3(ndc.extend(1.0));
@@ -306,19 +314,29 @@ impl Navigator {
     /// The world point under a window point at the view as it is.
     fn city_world_at(&self, x: f32, y: f32) -> Option<DVec2> {
         let (w, h) = self.city_size();
-        let cam = Self::city_cam(self.city.mpp, self.city.tilt, w, h);
+        let cam = Self::city_cam(self.city.mpp, self.city.tilt, self.city.phi, w, h);
         Self::unproject(&cam, w, h, x - self.city.rect[0], y - self.city.rect[1]).map(|d| self.city.center + d)
     }
 
-    /// A mouse press while the map is open: on it, a drag or a button; outside, it closes.
+    /// A mouse press while the map is open: on it, a drag or a button; outside, nothing (the map
+    /// closes with its cross or Escape only).
     pub fn map_press(&mut self, x: f32, y: f32) {
         if !self.map_hit(x, y) {
-            self.city.open = false;
             return;
         }
         let local = Vec2::new(x - self.city.rect[0], y - self.city.rect[1]);
         let hit = self.city.buttons.iter().find(|(r, _)| r.contains(local)).map(|b| b.1);
+        // the lines panel: its rows and tabs, or its background (never a drag of the map)
+        if hit.is_none() && self.city.lines.has_point(local) {
+            if let Some(h) = self.city.lines.hit(local) {
+                self.lines_click(h);
+            }
+            return;
+        }
         match hit {
+            Some(5) => self.city.lines.toggle(),
+            Some(6) => self.show_contours = !self.show_contours,
+            Some(7) => self.orient = (self.orient + 1) % 3,
             Some(0) => self.city.follow = true,
             Some(1) => self.city.mpp = (self.city.mpp / 1.6).max(MIN_MPP),
             Some(2) => self.city.mpp = (self.city.mpp * 1.6).min(self.max_mpp()),
@@ -373,6 +391,12 @@ impl Navigator {
 
     /// The wheel over the map: zoom, keeping the point under the cursor where it is.
     pub fn map_wheel(&mut self, amount: f32, x: f32, y: f32) {
+        // over the lines list the wheel scrolls it (anywhere else it zooms the map)
+        let r = self.city.rect;
+        if self.city.lines.list_has_point(Vec2::new(x - r[0], y - r[1])) {
+            self.city.lines.scroll_by(-amount * 2.0);
+            return;
+        }
         let before = self.city_world_at(x, y);
         let k = (1.0 - amount as f64 * 0.15).clamp(0.6, 1.6);
         self.city.mpp = (self.city.mpp * k).clamp(MIN_MPP, self.max_mpp());
@@ -388,7 +412,7 @@ impl Navigator {
         }
     }
 
-    fn max_mpp(&self) -> f64 {
+    pub(super) fn max_mpp(&self) -> f64 {
         let (lo, hi) = self.city.extent;
         let span = (hi - lo).max_element().max(2000.0);
         let r = self.city.rect;
@@ -423,7 +447,8 @@ impl Navigator {
         // (tilted, the far part of the view reaches well beyond the middle's scale)
         let radius = (w.max(h) as f64 * mpp * (0.8 + 1.4 * tilt as f64)).max(500.0);
         let detail = (mpp < 0.7) as u64 | ((mpp < 2.2) as u64) << 1 | ((mpp < 3.5) as u64) << 2 | ((mpp < 6.0) as u64) << 3;
-        let key = self.look_key() ^ detail << 40 ^ self.global_version << 48;
+        let band = self.contour_band();
+        let key = self.look_key() ^ detail << 40 ^ self.global_version << 48 ^ band.map_or(0, |b| 1 + b.1) << 60;
         let mut arrived = None;
         if let Some(job) = self.city_job.as_ref() {
             match job.poll() {
@@ -444,10 +469,10 @@ impl Navigator {
         };
         if stale && arrived.is_none() {
             let look = GroundLook { surfaces: mpp < 0.7, trees: mpp < 0.7, dashes: mpp < 3.5 };
-            let parts = self.ground_parts(net);
+            let parts = self.ground_parts(net, band.map(|b| b.0));
             let pal2 = *pal;
             let houses = mpp < 6.0;
-            let job = move || super::build::build(&parts, centre, radius, &pal2, look, mpp < 2.2, houses);
+            let job = move || super::build::build(&parts, centre, radius, &pal2, look, mpp < 2.2, houses.then_some(omsi_mapdraw::MODEL_TRIANGLES));
             if self.city.ground.is_none() {
                 // (the first picture at once: nothing to show meanwhile)
                 let b = job();
@@ -516,6 +541,7 @@ impl Navigator {
         if (self.city.tilt - want_tilt).abs() < 0.01 {
             self.city.tilt = want_tilt;
         }
+        let phi = self.ease_turn(f.heading, f.dt as f64);
         let s = (h / 760.0).clamp(0.95, 2.0) * f.ui_scale;
         let global = self.global.clone();
         let net = global.as_deref().or(f.traffic.map(|t| &t.net));
@@ -526,8 +552,11 @@ impl Navigator {
         let anchor = self.city.ground.map(|g| g.anchor).unwrap_or(self.city.center);
         let rel = |q: DVec3| Vec3::new((q.x - anchor.x) as f32, (q.y - anchor.y) as f32, 0.0);
         let route_verts = self.city_route(net, f, anchor, s, &pal).map(|p| p.verts);
+        // the ways of the ticked lines (buffer 18)
+        let ln_verts = self.lines_mesh(anchor, w, h, s);
+        let ln_n = self.lines_mesh_len();
         // the camera, relative to the anchor
-        let cam = Self::city_cam(self.city.mpp, self.city.tilt, w, h);
+        let cam = Self::city_cam(self.city.mpp, self.city.tilt, self.city.phi, w, h);
         let shift = (self.city.center - anchor).as_vec2();
         let vpm = cam.vp * Mat4::from_translation(-shift.extend(0.0));
         let vp = [0.0, 0.0, w, h];
@@ -565,6 +594,8 @@ impl Navigator {
                 transit.push((v.pos, v.heading, Some(v.line.clone())));
             }
         }
+        // the vehicles on a ticked line ringed in that line's colour (and counted for its card)
+        let on_line = self.ring_ticked_lines(&transit, anchor, &mut dots);
         // (over the route in their order, no depth: see the small map)
         let dots_solid = dots.verts;
         // marks, names, cards
@@ -631,6 +662,7 @@ impl Navigator {
                 ui.text_rotated(&mut self.atlas, &self.fonts, name, px, Weight::Medium, p, ang, pal.label);
             }
         }
+        self.terrain_labels(&mut ui, &on_screen, win, s, &mut taken);
         for (k, p) in markers.into_iter().rev() {
             if self.city.mpp < 4.0 || k == 0 || k + 1 == n_stops {
                 stop_pin(&mut ui, &mut self.atlas, p, k == 0, k + 1 == n_stops, s);
@@ -646,7 +678,7 @@ impl Navigator {
         }
         for pl in &f.players {
             let Some(p) = to_screen(pl.position).filter(|p| win.contains(*p)) else { continue };
-            puck(&mut ui, p, (pl.heading as f32).to_radians(), 8.5 * s, PLAYER);
+            puck(&mut ui, p, ((pl.heading as f64).to_radians() - phi) as f32, 8.5 * s, PLAYER);
             let px = 11.0 * s;
             let name = self.fonts.fit(&pl.name, px, Weight::Bold, 140.0 * s);
             let tw = self.fonts.width(&name, px, Weight::Bold) + 12.0 * s;
@@ -659,7 +691,7 @@ impl Navigator {
             ui.text_in(&mut self.atlas, &self.fonts, &name, px, Weight::Bold, r, Align::Center, Color::WHITE);
         }
         if let Some(bp) = to_screen(f.bus) {
-            puck(&mut ui, bp, (f.heading as f32).to_radians(), 10.0 * s, pal.route);
+            puck(&mut ui, bp, ((f.heading as f64).to_radians() - phi) as f32, 10.0 * s, pal.route);
         }
         let icon_verts = self.city_icons(&on_screen, win, s);
         // --- the cards: the trip top left, the buttons top right, the scale bottom left
@@ -718,9 +750,8 @@ impl Navigator {
             }
             self.city.buttons.push((r, id));
         }
-        if self.show_surface && self.place.has_location() {
-            self.place.draw_chips(&mut ui, &mut self.atlas, &self.fonts, head, w, pad, s);
-        }
+        // the Terrain and Lines buttons left of the close button, the lines panel left of the column, the compass
+        self.draw_top_controls(&mut ui, (w, h, s), (pad, bs, bx, close), &on_line, &on_screen);
         if self.show_surface && self.place.has_location() {
             self.place.draw_chips(&mut ui, &mut self.atlas, &self.fonts, head, w, pad, s);
         }
@@ -738,6 +769,9 @@ impl Navigator {
             let (solid, ghost) = solid_and_ghost(&v, 0.3);
             gpu.upload(device, queue, 4, &solid);
             gpu.upload(device, queue, 11, &ghost);
+        }
+        if let Some(v) = ln_verts {
+            gpu.upload(device, queue, 18, &v);
         }
         let mut all = bg.verts;
         let n_dots = dots_solid.len() as u32;
@@ -762,6 +796,7 @@ impl Navigator {
             Draw { buffer: 11, range: 0..if stand { route_n } else { 0 }, layer: 1, texture: 0 },
             // (flat from above the route needs no depth: from far it fought with itself)
             Draw { buffer: 4, range: 0..route_n, layer: if stand { 4 } else { 1 }, texture: 0 },
+            Draw { buffer: 18, range: 0..ln_n, layer: if stand { 4 } else { 1 }, texture: 0 },
             Draw { buffer: 5, range: n_bg..n_bg + n_dots, layer: 1, texture: 0 },
             Draw { buffer: 17, range: 0..icon_n, layer: 0, texture: icon_tex },
             Draw { buffer: 5, range: n_ui..all.len() as u32, layer: 0, texture: 0 },

@@ -349,6 +349,12 @@ impl ApplicationHandler for App {
                 if self.game_panel_click(state == ElementState::Pressed) {
                     return;
                 }
+                // ... and those on a plugin's panel that takes them without the mouse (`grab`:
+                // a card clicked away or kept), with the release - under the game's own
+                // panels, as the plugins' panels are drawn
+                if self.plugin_grab(state == ElementState::Pressed) {
+                    return;
+                }
                 if self.input.touch.enabled {
                     let p = glam::Vec2::new(self.input.cursor.0, self.input.cursor.1);
                     if state == ElementState::Pressed {
@@ -471,6 +477,7 @@ impl ApplicationHandler for App {
     /// anything else is torn down (Cmd+Q ends the process without returning from the loop).
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         crate::game_lists::flush_settings(true);
+        self.abort_optimiser();
         self.finish_session();
         // (with the pipelines made since the start: puddles, Enhanced+)
         omsi_render::pipeline_cache::save();

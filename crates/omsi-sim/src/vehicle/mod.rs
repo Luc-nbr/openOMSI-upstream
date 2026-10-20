@@ -21,6 +21,7 @@ use engine_vars::Ev;
 pub use pax_vars::PaxVars;
 mod reload;
 pub use damage::{BrokenGlass, DynamicImpact, VehicleDent};
+mod car_run;
 mod contact;
 mod coupling;
 mod drive;
@@ -38,6 +39,7 @@ mod weather;
 
 pub use contact::*;
 pub use coupling::*;
+pub use car_run::CarRun;
 #[cfg(test)]
 use drive::*;
 pub use pose::*;
@@ -133,6 +135,8 @@ pub struct VehicleInstance {
     pub light_fade: Vec<f32>,
     /// The meshes' transforms in the modelled pose, for `[smoothskin]` (made when needed).
     skin_rest: Vec<Mat4>,
+    /// What `[smoothskin]` needs of each skinned mesh, worked out once (see [`SkinPlan`]).
+    skin_plans: SkinPlans,
     /// Static obstacles; the vehicle's `[boundingbox]` is kept out of them.
     pub collision: Option<Arc<crate::collision::CollisionWorld>>,
     /// Moving obstacles (AI vehicles) for this frame, set by the app.

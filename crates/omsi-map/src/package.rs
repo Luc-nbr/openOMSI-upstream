@@ -15,8 +15,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+mod lines;
 mod places;
+mod relief;
+pub use lines::{LineInfo, RouteInfo, GROUP_BRT, GROUP_EXPRESS, GROUP_FEEDER, MODAL_BUS, MODAL_METRO, MODAL_RAIL, MODAL_TRAM};
 pub use places::{Label, Marker, Region, Street};
+pub use relief::{LINE_CONTOUR, LINE_CONTOUR_INDEX};
 
 pub const FOLDER: &str = "openomsi-realmap";
 const MAGIC: &[u8; 4] = b"OMSF";
@@ -154,6 +158,8 @@ pub struct Layers {
     /// Rivers, rail and borders (the streets and contours of a package are not here: the
     /// readers that need them read their own classes).
     pub lines: Vec<Line>,
+    /// The contour lines of the ground (classes 5 and 6; `width` is the height in metres): none in a package without relief.
+    pub contours: Vec<Line>,
 }
 
 /// The package of a map (see the module).
@@ -173,8 +179,17 @@ pub struct Package {
     by_key: HashMap<(i32, i32), usize>,
     /// The package folder (`markers.cfg`, `regions.cfg` and `icons/` lie in it).
     dir: PathBuf,
+    /// The map's folder the package was opened for (its timetable is there).
+    map_dir: PathBuf,
     regions: Vec<Region>,
     has_streets: bool,
+    /// Where real north lies: degrees clockwise from the map's own up (the manifest's `north`).
+    north: f32,
+    lines: Vec<LineInfo>,
+    /// The package carries contour lines; the manifest's `terrain_offset`; where heights are written (made on first use).
+    has_contours: bool,
+    terrain_offset: f32,
+    contour_marks: std::sync::OnceLock<Vec<((f64, f64), i32, bool)>>,
 }
 
 /// Bounds-checked reading: any short or odd file ends in `None`, never a panic.
@@ -233,6 +248,8 @@ impl Package {
         let (mut format, mut grid) = (0u32, 0.0f64);
         let (mut name, mut credit) = (String::new(), String::new());
         let (mut dark, mut light) = (Palette::dark(), Palette::light());
+        let mut terrain_offset = 0.0f32;
+        let mut north = 0.0f32;
         for line in text.lines() {
             let line = line.trim();
             if line.starts_with('#') {
@@ -247,6 +264,8 @@ impl Package {
                 "grid" => grid = v.parse().unwrap_or(0.0),
                 "name" => name = v.to_string(),
                 "credit" => credit = v.to_string(),
+                "terrain_offset" => terrain_offset = v.parse().unwrap_or(0.0),
+                "north" => north = v.parse::<f32>().ok().filter(|n| n.is_finite()).unwrap_or(0.0),
                 _ => {
                     // a colour: `water = #..` for the dark map, `light_water = #..` for the light one
                     if let Some(c) = parse_color(v) {
@@ -269,7 +288,12 @@ impl Package {
         let mut p = Self::parse(data, name, credit, dark, light, grid);
         if let Some(p) = p.as_mut() {
             p.dir = dir.clone();
+            p.map_dir = map_dir.to_path_buf();
+            p.terrain_offset = terrain_offset;
+            p.north = north;
+            p.load_relief();
             p.load_places();
+            p.load_lines();
         }
         if p.is_none() {
             log::warn!(
@@ -336,9 +360,25 @@ impl Package {
             names,
             by_key,
             dir: PathBuf::new(),
+            map_dir: PathBuf::new(),
             regions: Vec::new(),
             has_streets: false,
+            north: 0.0,
+            lines: Vec::new(),
+            has_contours: false,
+            terrain_offset: 0.0,
+            contour_marks: std::sync::OnceLock::new(),
         })
+    }
+
+    /// The map's folder the package was opened for.
+    pub fn map_dir(&self) -> &Path {
+        &self.map_dir
+    }
+
+    /// Where real north lies: degrees clockwise from the map's own up (0 when the manifest does not say).
+    pub fn north(&self) -> f32 {
+        self.north
     }
 
     /// The colours of the dark map or of the light one.
@@ -428,8 +468,16 @@ impl Package {
             if n.checked_mul(8)? > r.left() {
                 return None;
             }
+            if class == LINE_CONTOUR || class == LINE_CONTOUR_INDEX {
+                let mut points = Vec::with_capacity(n);
+                for _ in 0..n {
+                    points.push(self.to_world(r.f32()?, r.f32()?));
+                }
+                out.contours.push(Line { class, width, points });
+                continue;
+            }
             if !matches!(class, LINE_RIVER | LINE_RAIL | LINE_BORDER) {
-                // a street to look up or a contour: not for this reader
+                // a street to look up: not for this reader
                 r.take(n * 8)?;
                 continue;
             }
@@ -444,6 +492,35 @@ impl Package {
             });
         }
         Some(())
+    }
+}
+
+#[cfg(test)]
+impl Package {
+    /// An empty package, for the tests of what hangs on one.
+    pub(crate) fn test_stub() -> Package {
+        Package {
+            name: String::new(),
+            credit: String::new(),
+            dark: Palette::dark(),
+            light: Palette::light(),
+            origin: (0.0, 0.0),
+            grid: 300.0,
+            chunk: 2000.0,
+            index: Vec::new(),
+            data: Vec::new(),
+            names: Vec::new(),
+            by_key: HashMap::new(),
+            dir: PathBuf::new(),
+            map_dir: PathBuf::new(),
+            regions: Vec::new(),
+            has_streets: false,
+            north: 0.0,
+            lines: Vec::new(),
+            has_contours: false,
+            terrain_offset: 0.0,
+            contour_marks: std::sync::OnceLock::new(),
+        }
     }
 }
 
@@ -571,6 +648,7 @@ mod tests {
         let p = Package::open(&dir).expect("docs/examples/openomsi-realmap is a package");
         assert_eq!(p.name, "Synthetic example");
         assert_eq!(p.chunks(), 1);
+        assert_eq!(p.north(), 12.0, "the manifest of the example says where north lies");
         let l = p.layers(None);
         assert_eq!(l.fills[FILL_WATER as usize].len(), 14);
         for class in [FILL_GREEN, FILL_BUILT, FILL_GRASS, FILL_FOREST, FILL_SPORT, FILL_FARM] {
@@ -578,6 +656,10 @@ mod tests {
         }
         let classes: Vec<u8> = l.lines.iter().map(|x| x.class).collect();
         assert_eq!(classes, vec![LINE_RIVER, LINE_RIVER, LINE_RAIL, LINE_BORDER]);
+        // a hill: eleven contour lines, from 40 to 60 m, an index line at each tenth
+        assert!(p.has_contours());
+        assert_eq!(l.contours.len(), 11);
+        assert_eq!(l.contours.iter().filter(|c| c.class == LINE_CONTOUR_INDEX).map(|c| c.width as i32).collect::<Vec<_>>(), vec![40, 50, 60]);
         // the file's origin is the south-west corner of the tutorial map's tiles (-300, -600): tile (-1, -2)
         let (x, y) = crate::tile_local_to_world(-1, -2, 0.0, 0.0);
         let first = l.fills[FILL_WATER as usize][0][0];
