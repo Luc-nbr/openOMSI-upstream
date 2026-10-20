@@ -44,6 +44,8 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
     let graphics: Vec<(String, String)> = vec![
         pick("graphics", "Graphics", later),
         preset_row(&file, "Quality preset", "Sets most of the graphics options at once"),
+        app.can_optimise().then(|| button("Optimise for my PC", "Start", "Measures while you drive and adjusts the graphics for a smooth frame rate; your settings are saved first", "optimise")),
+        omsi_launcher_lib::optimise::backup().is_some().then(|| button("Restore my previous settings", "Restore", "The graphics settings as they were before the last optimisation", "optimise_restore")),
         pick("msaa", "Anti-aliasing", later),
         pick("render_scale", "Render scale", later),
         pick("anisotropy", "Anisotropic", later),
@@ -207,6 +209,8 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
         .flatten()
         .collect();
     camera.push(button("Reset the seat position", "Reset", "Put the seat back where the vehicle has it.", "seat_reset"));
+    camera.extend(pick("mirror_hud", "Mirror panels on the screen", "Copies of the bus's mirrors over the picture in the cab, as in ETS2 (Ctrl+M shows or hides them); a bus whose panels you arranged keeps its own"));
+    if app.player.is_some() && !app.vr_active() && s.mirror_size != 0 { camera.push(button("Arrange the mirror panels", "Open", "Drag them where you want them and change their size, saved for this vehicle (Ctrl+Shift+M).", "mirror_hud_edit")); }
     if app.player.is_some() && !app.vr_active() { camera.push(button("Edit the view and mirrors", "Open", "A panel at the side of the driver's view: the eye, the direction, the field of view and each mirror, saved for this vehicle.", "view_editor")); }
     if cfg!(windows) {
         camera.extend(

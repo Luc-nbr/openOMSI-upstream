@@ -68,7 +68,7 @@ impl DrawPlan {
 }
 
 // the depth prepass: opaque and alpha-tested, single-sampled
-fn prepass_items(scene: &Scene, visible: &[(usize, f32, bool)], deferred: bool) -> (Vec<u32>, Vec<Batch>, Option<Vec<Batch>>, Vec<Batch>) {
+fn prepass_items(scene: &Scene, visible: &[(usize, f32, bool)], deferred: bool, reach: f32) -> (Vec<u32>, Vec<Batch>, Option<Vec<Batch>>, Vec<Batch>) {
     let mut items: Vec<DrawItem> = Vec::new();
     let mut kept: Vec<DrawItem> = Vec::new();
     let mut any_cut = false;
@@ -77,8 +77,9 @@ fn prepass_items(scene: &Scene, visible: &[(usize, f32, bool)], deferred: bool) 
     let mut safe_items = Vec::new();
     let mut safe_batches = Vec::new();
     let first_panes = first_depth_panes(scene, visible);
-    for &(i, _, _) in visible {
+    for &(i, z, _) in visible {
         let inst = &scene.instances[i];
+        let far = z > reach && !inst.surface && !inst.presurface && z - Renderer::bounding_sphere(scene, inst).1 > reach;
         let mut cut = inst.ordered && first_panes.get(&origin_key(inst.origin)).is_some_and(|&o| inst.draw_order > o);
         let cull = culls_back_faces(scene, inst);
         for (ri, (_, _, slot)) in scene.meshes[inst.mesh].ranges.iter().enumerate() {
@@ -100,6 +101,9 @@ fn prepass_items(scene: &Scene, visible: &[(usize, f32, bool)], deferred: bool) 
             // The transmap body prepass is for ordinary meshes, not these
             // authored surface layers (including their terrain brush masks).
             if kind == PIPE_BLEND && world_surface_phase(effective_render_phase(inst)) {
+                continue;
+            }
+            if far && kind < PIPE_BLEND {
                 continue;
             }
             if let Some(pre_kind) = depth_prepass_kind(kind, mat, inst.presurface) {
@@ -311,7 +315,7 @@ impl Renderer {
         let mut prefill = None;
         let mut msaa_safe_batches = Vec::new();
         let deferred = has_presurface && f.enhanced;
-        let prepass_job = || { prepass_items(scene, visible, deferred) };
+        let prepass_job = || { prepass_items(scene, visible, deferred, f.prepass_reach) };
         // The main pass follows the authored world phases. Each phase keeps its
         // opaque/cutout draws followed by its blended draws, far to near. Transparent
         // ground layers never write depth while composing: an alpha-zero junction
@@ -631,6 +635,8 @@ impl Renderer {
             let mode = (f.enhanced, f.reflection_frame, format, self.options.msaa, rt_gbuf());
             let chunks = bundle_chunks(self.encoding_pool.as_ref(), batches);
             let mut reuse: Vec<Option<wgpu::RenderBundle>> = vec![None; chunks.len()];
+            // (what a part binds is kept once its batches repeat: while driving they change every frame)
+            let mut repeated = vec![false; chunks.len()];
             let mirrors = self.history.mirror_bundles.borrow();
             let window = kept.then(|| self.history.main_bundles.borrow());
             let last = match &window {
@@ -641,8 +647,9 @@ impl Renderer {
                 if let Some(c) = last {
                     if c.mode == mode && c.camera == *camera {
                         for (k, chunk) in chunks.iter().enumerate() {
-                            if let Some((b, r, bundle)) = c.parts.get(k) {
-                                if *b == **chunk && same_resources(scene, chunk, r) {
+                            if let Some((_, r, bundle)) = c.parts.get(k).filter(|(b, ..)| *b == **chunk) {
+                                repeated[k] = true;
+                                if r.as_ref().is_some_and(|r| same_resources(scene, chunk, r)) {
                                     reuse[k] = Some(bundle.clone());
                                 }
                             }
@@ -672,7 +679,8 @@ impl Renderer {
                 parts: chunks
                     .iter()
                     .zip(&bundles)
-                    .map(|(chunk, b)| (chunk.to_vec(), batch_resources(scene, chunk), b.clone().expect("whole")))
+                    .zip(&repeated)
+                    .map(|((chunk, b), &again)| (chunk.to_vec(), again.then(|| batch_resources(scene, chunk)), b.clone().expect("whole")))
                     .collect(),
             };
             if kept {
@@ -700,8 +708,8 @@ impl Renderer {
 pub(crate) struct MainBundles {
     mode: (bool, bool, wgpu::TextureFormat, u32, bool),
     camera: wgpu::BindGroup,
-    /// each bundle with the batches it was recorded from and what they bound
-    parts: Vec<(Vec<Batch>, Vec<BatchResources>, wgpu::RenderBundle)>,
+    /// each bundle with the batches it was recorded from and what they bound (once they repeat)
+    parts: Vec<(Vec<Batch>, Option<Vec<BatchResources>>, wgpu::RenderBundle)>,
 }
 
 /// What a recorded batch binds: its mesh's buffers and place in them, and its material's

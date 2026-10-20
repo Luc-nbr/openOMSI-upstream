@@ -307,6 +307,157 @@ fn crowded_stop_markers_and_labels_do_not_overlap() {
     assert!(stop_label_rect(p, 150.0, 1.0, win, &[win]).is_none());
 }
 
+/// A navigator with the synthetic example of the docs (three lines: two buses and a tram) as its package.
+fn with_example_lines() -> Navigator {
+    let mut n = Navigator::new(true, 0.85, "bottom-left");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples");
+    n.set_surface(omsi_map::package::Package::open(&dir));
+    assert!(n.surface.is_some(), "the example is a package");
+    n
+}
+
+#[test]
+fn the_lines_panel_lists_the_lines_of_one_kind_of_vehicle_and_one_group() {
+    let mut n = with_example_lines();
+    // buses first: E1 and E2; the BRT tab keeps E2; the tram tab has T1
+    assert_eq!(n.shown_lines(), vec![0, 1]);
+    n.lines_click(LinesHit::Filter(omsi_map::package::GROUP_BRT));
+    assert_eq!(n.shown_lines(), vec![1]);
+    n.lines_click(LinesHit::Modal(omsi_map::package::MODAL_TRAM));
+    assert_eq!(n.shown_lines(), vec![2]);
+}
+
+#[test]
+fn a_line_is_ticked_and_unticked_and_a_double_click_opens_it() {
+    let mut n = with_example_lines();
+    n.lines_click(LinesHit::Toggle(0));
+    assert_eq!(n.city.lines.selected, vec![0]);
+    n.lines_click(LinesHit::Toggle(0));
+    assert!(n.city.lines.selected.is_empty());
+    // a click on a name ticks it; a second one within a moment opens its data
+    n.time = 10.0;
+    n.lines_click(LinesHit::Focus(1));
+    assert_eq!((n.city.lines.selected.clone(), n.city.lines.focus), (vec![1], None));
+    n.time = 10.2;
+    n.lines_click(LinesHit::Focus(1));
+    assert_eq!((n.city.lines.selected.clone(), n.city.lines.focus), (vec![1], Some(1)));
+    // a line that does not exist is left alone
+    n.lines_click(LinesHit::Toggle(99));
+    assert_eq!(n.city.lines.selected, vec![1]);
+}
+
+#[test]
+fn select_all_ticks_what_is_on_show_and_clears_it_the_second_time() {
+    let mut n = with_example_lines();
+    n.lines_click(LinesHit::All);
+    assert_eq!(n.city.lines.selected, vec![0, 1]);
+    n.lines_click(LinesHit::All);
+    assert!(n.city.lines.selected.is_empty());
+}
+
+#[test]
+fn the_route_of_the_line_in_focus_is_picked() {
+    let mut n = with_example_lines();
+    n.debug_lines("E1;1");
+    assert_eq!((n.city.lines.open, n.city.lines.selected.clone(), n.city.lines.focus), (true, vec![0], Some(0)));
+    assert_eq!(n.city.lines.route.get(&0), Some(&1));
+    n.lines_click(LinesHit::RoutePick(0));
+    assert_eq!(n.city.lines.route.get(&0), Some(&0));
+    // an unknown number opens nothing
+    let mut other = with_example_lines();
+    other.debug_lines("nope");
+    assert!(!other.city.lines.open);
+}
+
+#[test]
+fn the_terrain_view_leaves_out_the_land_use_and_draws_the_contour_lines() {
+    let n = with_example_lines();
+    let sf = n.surface.clone().unwrap();
+    assert!(sf.has_contours());
+    let pal = style::palette(false);
+    let (mut full, mut terrain) = (Painter::new(), Painter::new());
+    surface::build_surface(&mut full, &sf, DVec2::ZERO, None, pal, false);
+    let layers = surface::build_surface(&mut terrain, &sf, DVec2::ZERO, None, pal, true);
+    assert!(!full.verts.is_empty() && !terrain.verts.is_empty());
+    // (the land use is left out of the terrain view)
+    assert!(terrain.verts.len() < full.verts.len());
+    // the contour lines are a ribbon each; the strength changes the colour, not the lines
+    let (mut strong, mut faint) = (Painter::new(), Painter::new());
+    surface::build_contours(&mut strong, &layers, DVec2::ZERO, pal, 1.0);
+    surface::build_contours(&mut faint, &layers, DVec2::ZERO, pal, 0.2);
+    assert!(!strong.verts.is_empty());
+    assert_eq!(strong.verts.len(), faint.verts.len());
+    assert!(strong.verts.iter().zip(&faint.verts).any(|(a, b)| a.color != b.color));
+}
+
+#[test]
+fn the_terrain_view_needs_a_button_a_package_with_relief_and_has_a_band_for_each_zoom() {
+    let mut n = with_example_lines();
+    assert!(n.contour_band().is_none(), "off until the button is pressed");
+    n.show_contours = true;
+    n.city.mpp = 2.0;
+    assert_eq!(n.contour_band().map(|b| b.1), Some(0));
+    n.city.mpp = 8.0;
+    assert_eq!(n.contour_band().map(|b| b.1), Some(1));
+    n.city.mpp = 30.0;
+    assert_eq!(n.contour_band().map(|b| b.1), Some(2));
+    // (the surface drawn off: no terrain view either)
+    n.surface = None;
+    assert!(n.contour_band().is_none());
+}
+
+#[test]
+fn the_turned_view_has_the_chosen_direction_up_on_the_screen() {
+    let (w, h) = (1000.0f32, 600.0f32);
+    let top = |phi: f64| Navigator::unproject(&Navigator::city_cam(2.0, 0.0, phi, w, h), w, h, w * 0.5, 0.0).unwrap();
+    let centre = |phi: f64| Navigator::unproject(&Navigator::city_cam(2.0, 0.0, phi, w, h), w, h, w * 0.5, h * 0.5).unwrap();
+    // as drawn: north (+y) is up; the middle of the view is the point looked at, however the view is turned
+    assert!(top(0.0).y > 100.0 && top(0.0).x.abs() < 1e-3);
+    assert!(centre(1.234).length() < 1e-3);
+    // turned a quarter clockwise: the direction a quarter clockwise from the map's up (east, +x) is up
+    let east = top(std::f64::consts::FRAC_PI_2);
+    assert!(east.x > 100.0 && east.y.abs() < 1e-2, "{east:?}");
+    // half a turn: south is up; the same distance from the middle whichever way it is turned
+    let south = top(std::f64::consts::PI);
+    assert!(south.y < -100.0 && (south.length() - top(0.0).length()).abs() < 1e-2, "{south:?}");
+}
+
+#[test]
+fn the_compass_changes_how_the_map_is_turned_in_turn() {
+    let mut n = with_example_lines();
+    n.city.open = true;
+    n.city.rect = [0.0, 0.0, 800.0, 500.0];
+    n.city.buttons.push((Rect::new(10.0, 10.0, 40.0, 40.0), 7));
+    assert_eq!(n.orient, 0);
+    for want in [1, 2, 0] {
+        n.map_press(20.0, 20.0);
+        n.map_release();
+        assert_eq!(n.orient, want);
+    }
+}
+
+#[test]
+fn the_timetable_is_read_on_a_worker_and_the_frame_does_not_wait_for_it() {
+    let mut n = with_example_lines();
+    n.date = 19900101;
+    // (asked for the first time: a worker starts, and what comes back is "not yet" or, if it was quick, the timetable)
+    let first = n.line_times();
+    assert!(first.is_some() || n.times_job.is_some());
+    let began = std::time::Instant::now();
+    let mut got = first;
+    while got.is_none() && began.elapsed() < std::time::Duration::from_secs(10) {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        got = n.line_times();
+    }
+    assert!(got.is_some(), "the worker answers");
+    // (kept: asked again, it is the same and no worker runs)
+    assert!(n.times_job.is_none());
+    assert!(std::sync::Arc::ptr_eq(&got.unwrap(), &n.line_times().unwrap()));
+    // a new date is read again, on a worker
+    n.date = 19910101;
+    let again = n.line_times();
+    assert!(again.is_some() || n.times_job.as_ref().is_some_and(|j| j.0 == 19910101));
+}
 
 #[test]
 fn redraw_rate_holds_steady_at_its_edges() {
@@ -345,4 +496,70 @@ fn closed_stops_stay_on_the_list_marked() {
     d.set_closed_stops(&["rathaus".into()], "via Kirchweg");
     let (_, _, stops, _) = duty_parts(Some(&d));
     assert_eq!(stops.iter().map(|s| s.closed.as_deref()).collect::<Vec<_>>(), [None, Some("via Kirchweg"), None]);
+}
+
+#[test]
+fn the_heights_of_the_contours_are_made_on_a_worker_and_only_with_the_terrain_on() {
+    let mut n = with_example_lines();
+    let sf = n.surface.clone().unwrap();
+    let win = Rect::new(0.0, 0.0, 1000.0, 600.0);
+    let at = |_q: DVec3| Vec2::new(500.0, 300.0);
+    // terrain off: nothing is asked for, nothing is started
+    n.city.mpp = 2.0;
+    let mut ui = Painter::new();
+    n.terrain_labels(&mut ui, &at, win, 1.0, &mut Vec::new());
+    assert_eq!(n.marks_started, 0);
+    assert!(sf.contour_marks_ready().is_none());
+    // terrain on: the frame does not make them; a worker does, and the labels follow
+    n.show_contours = true;
+    // (and with the map's surface off there is no terrain view either: no lines are built, so no heights)
+    n.show_surface = false;
+    n.terrain_labels(&mut ui, &at, win, 1.0, &mut Vec::new());
+    assert_eq!(n.marks_started, 0);
+    n.show_surface = true;
+    n.terrain_labels(&mut ui, &at, win, 1.0, &mut Vec::new());
+    assert_eq!(n.marks_started, n.surface_version + 1);
+    let began = std::time::Instant::now();
+    while sf.contour_marks_ready().is_none() && began.elapsed() < std::time::Duration::from_secs(10) {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(sf.contour_marks_ready().is_some_and(|m| !m.is_empty()), "the worker made the marks");
+    let before = ui.verts.len();
+    n.terrain_labels(&mut ui, &at, win, 1.0, &mut Vec::new());
+    assert!(ui.verts.len() > before, "the heights are written once they are there");
+    // none over what the map has written already: with the whole window taken, no height is written
+    let all = vec![Rect::new(-1.0e5, -1.0e5, 2.0e5, 2.0e5)];
+    let before = ui.verts.len();
+    n.terrain_labels(&mut ui, &at, win, 1.0, &mut all.clone());
+    assert_eq!(ui.verts.len(), before, "the heights step aside for what is already there");
+}
+
+#[test]
+fn opening_a_line_does_not_read_the_timetable_but_pressing_the_button_does() {
+    let mut n = with_example_lines();
+    n.date = 19900101;
+    n.debug_lines("E1");
+    assert!(n.city.lines.open && !n.city.lines.sheet);
+    // (the button asks only whether it has been read)
+    assert!(n.line_times_read().is_none());
+    assert!(n.times_job.is_none(), "no worker for a line that is only opened");
+    // the button: the sheet opens, and asking for it starts the worker
+    n.lines_click(LinesHit::Sheet);
+    assert!(n.city.lines.sheet);
+    let first = n.line_times();
+    assert!(first.is_some() || n.times_job.is_some());
+}
+
+#[test]
+fn the_compass_keeps_clear_of_the_open_lines_panel() {
+    let (w, h, s) = (1600.0f32, 900.0f32, 1.0f32);
+    let r = 24.0 * s;
+    // no panel: bottom right
+    let free = orient::compass_centre(w, h, s, None);
+    assert!((free.x - (w - 36.0 * s - r)).abs() < 1e-3);
+    // the panel open (its left edge as the city map lays it out: the column at w - 52, 12 px of gap, 332 px wide)
+    let left = (w - 52.0 * s) - 12.0 * s - 332.0 * s;
+    let beside = orient::compass_centre(w, h, s, Some(left));
+    assert!(beside.x + r <= left, "the disc ends before the panel begins: {} vs {left}", beside.x + r);
+    assert_eq!(beside.y, free.y, "only moved sideways");
 }

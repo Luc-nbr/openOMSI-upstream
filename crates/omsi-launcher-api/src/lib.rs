@@ -176,8 +176,8 @@ fn lines(map: String, date: String) -> Answer {
     to_json(core::list_lines(&map, &date).map_err(err)?)
 }
 
-fn ibis(bus: String, hof: String, line: String) -> Answer {
-    to_json(core::ibis_info(&bus, &hof, &line).map_err(err)?)
+fn ibis(bus: String, hof: String, line: String, terminus: Option<String>, stops: Option<Vec<String>>) -> Answer {
+    to_json(core::ibis_info(&bus, &hof, &line, &terminus.unwrap_or_default(), &stops.unwrap_or_default()).map_err(err)?)
 }
 
 /// The depot file the duty would use (see `core::default_hof`).
@@ -290,6 +290,16 @@ fn option_presets() -> Answer {
 fn graphics_presets(mode: String) -> Answer {
     let mode = core::graphics_mode(&mode);
     Ok(json!(core::graphics_presets_for(mode).into_iter().map(|(name, v)| json!({ "name": name, "settings": v })).collect::<Vec<_>>()))
+}
+
+fn optimise_arm(target: u32) -> Answer {
+    core::optimise::arm(target).map_err(err)?;
+    Ok(core::optimise::status())
+}
+
+fn optimise_restore() -> Answer {
+    let _one = SETTINGS_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    core::optimise::restore().map_err(err)
 }
 
 fn graphics_profiles() -> Answer {
@@ -451,18 +461,9 @@ fn server_query(address: String) -> Answer {
     }))
 }
 
-/// A code host's status page (its gateway is the session's port + 10), else its tunnel.
+/// A code host's first responsive status endpoint, including its tunnel.
 fn host_status(code: &str) -> Result<omsi_net::ws::ServerInfo, String> {
-    let c = omsi_net::SessionCode::decode(code)?;
-    for a in c.addrs().into_iter().take(3) {
-        if let Ok(i) = omsi_net::ws::query(&format!("http://{}:{}", a.ip(), a.port().saturating_add(10)), false) {
-            return Ok(i);
-        }
-    }
-    match omsi_net::bridge::lookup_tunnel(c.session) {
-        Some(url) => omsi_net::ws::query(&url, false),
-        None => Err("the host did not answer".into()),
-    }
+    omsi_net::ws::query_session(code)
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -516,6 +517,119 @@ fn notes_save(key: String, text: String) -> Answer {
     }
     std::fs::write(notes_path(), serde_json::to_vec_pretty(&all).map_err(err)?).map_err(err)?;
     Ok(json!(true))
+}
+
+// --- the player's depot (`depot.json`): buses of their own that keep their wear ---------
+
+/// The depots and their buses, each bus with what its last session left: odometer, fuel,
+/// dirt, broken parts.
+fn depot_get() -> Answer {
+    let d = core::depot::load().map_err(err)?;
+    let buses: Vec<Value> = d
+        .buses
+        .iter()
+        .map(|b| {
+            let mut v = serde_json::to_value(b).unwrap_or_default();
+            if let Some(o) = v.as_object_mut() {
+                o.remove("wear");
+                o.insert("odometer".into(), json!(b.odometer()));
+                o.insert("fuel".into(), json!(b.fuel()));
+                o.insert("dirt".into(), json!(b.dirt()));
+                o.insert("faults".into(), json!(b.faults()));
+            }
+            v
+        })
+        .collect();
+    Ok(json!({ "buses": buses, "groups": d.group_names() }))
+}
+
+/// A new bus in the depot, with a plate none of the others has; its id.
+fn depot_add(bus: String, paint: Option<String>, number: Option<String>, name: String, group: Option<String>) -> Answer {
+    let id = core::depot::update(|d| {
+        let plate = d.new_plate(plate_seed());
+        Ok(d.add(core::depot::DepotBus { name, bus, paint: paint.unwrap_or_default(), plate, number: number.unwrap_or_default(), group: group.unwrap_or_default(), ..Default::default() }))
+    })
+    .map_err(err)?;
+    Ok(json!(id))
+}
+
+/// A depot bus's name, paint, plate or fleet number changed (its wear stays).
+fn depot_update(id: String, patch: Value) -> Answer {
+    core::depot::update(|d| {
+        let b = d.get_mut(&id).ok_or_else(|| anyhow::anyhow!("no depot bus {id}"))?;
+        let text = |k: &str| patch.get(k).and_then(Value::as_str).map(str::to_string);
+        if let Some(v) = text("name") {
+            b.name = v;
+        }
+        if let Some(v) = text("paint") {
+            b.paint = v;
+        }
+        if let Some(v) = text("plate") {
+            b.plate = v.trim().to_uppercase();
+        }
+        if let Some(v) = text("number") {
+            b.number = v;
+        }
+        if let Some(v) = text("group") {
+            b.group = v;
+        }
+        Ok(())
+    })
+    .map_err(err)?;
+    Ok(json!(true))
+}
+
+/// Refuel, wash or repair a depot bus (all of it, or one part): its next drive starts so.
+fn depot_service(id: String, kind: String) -> Answer {
+    core::depot::update(|d| {
+        let b = d.get_mut(&id).ok_or_else(|| anyhow::anyhow!("no depot bus {id}"))?;
+        if !b.service(&kind) {
+            anyhow::bail!("no depot service {kind}");
+        }
+        Ok(())
+    })
+    .map_err(err)?;
+    Ok(json!(true))
+}
+
+fn depot_remove(id: String) -> Answer {
+    core::depot::update(|d| {
+        d.remove(&id);
+        Ok(())
+    })
+    .map_err(err)?;
+    Ok(json!(true))
+}
+
+/// The player's depots: a new one, one renamed (with its buses) or one removed (its buses
+/// stay, in no depot).
+fn depot_group(op: &str, name: String, to: Option<String>) -> Answer {
+    let names = core::depot::update(|d| {
+        let done = match op {
+            "add" => d.add_group(&name),
+            "rename" => d.rename_group(&name, to.as_deref().unwrap_or_default()),
+            _ => {
+                d.remove_group(&name);
+                true
+            }
+        };
+        if !done {
+            anyhow::bail!("there is already a depot called {}", to.as_deref().unwrap_or(&name).trim());
+        }
+        Ok(d.group_names())
+    })
+    .map_err(err)?;
+    Ok(json!(names))
+}
+
+/// Another plate none of the depot's buses has.
+fn depot_plate() -> Answer {
+    let d = core::depot::load().map_err(err)?;
+    Ok(json!(d.new_plate(plate_seed())))
+}
+
+fn plate_seed() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|t| t.as_nanos() as u64).unwrap_or(0)
 }
 
 // --- the game's renderer: the bus preview and the city map (see `service`) -----------
@@ -665,7 +779,7 @@ pub fn call(cmd: &str, args: &Value, p: &dyn Platform) -> Answer {
         "custom_weather" => custom_weather(arg::<String>(args, "weather")?),
         "custom_weather_text" => custom_weather_text(arg::<Value>(args, "custom")?),
         "lines" => lines(arg::<String>(args, "map")?, arg::<String>(args, "date")?),
-        "ibis" => ibis(arg::<String>(args, "bus")?, arg::<String>(args, "hof")?, arg::<String>(args, "line")?),
+        "ibis" => ibis(arg::<String>(args, "bus")?, arg::<String>(args, "hof")?, arg::<String>(args, "line")?, arg::<Option<String>>(args, "terminus")?, arg::<Option<Vec<String>>>(args, "stops")?),
         "default_hof" => default_hof(arg::<Value>(args, "map")?, arg::<Value>(args, "bus")?, arg::<String>(args, "date")?, arg::<Option<String>>(args, "line")?),
         "saved_situations" => saved_situations(arg::<String>(args, "map")?),
         "delete_situation" => delete_situation(arg::<String>(args, "map")?, arg::<String>(args, "file")?),
@@ -692,6 +806,13 @@ pub fn call(cmd: &str, args: &Value, p: &dyn Platform) -> Answer {
         "graphics_profiles" => graphics_profiles(),
         "graphics_profile_save" => graphics_profile_save(arg::<String>(args, "name")?, arg::<Value>(args, "settings")?),
         "graphics_profile_delete" => graphics_profile_delete(arg::<String>(args, "name")?),
+        "optimise_status" => Ok(core::optimise::status()),
+        "optimise_arm" => optimise_arm(arg::<u32>(args, "target")?),
+        "optimise_cancel" => {
+            core::optimise::disarm();
+            Ok(core::optimise::status())
+        }
+        "optimise_restore" => optimise_restore(),
         "keybindings_get" => keybindings_get(),
         "keybindings_save" => keybindings_save(arg::<Value>(args, "bindings")?),
         "radio_stations" => radio_stations(),
@@ -720,6 +841,15 @@ pub fn call(cmd: &str, args: &Value, p: &dyn Platform) -> Answer {
         "server_query" => server_query(arg::<String>(args, "address")?),
         "choice_save" => choice_save(arg::<Value>(args, "choice")?),
         "favourites_save" => favourites_save(arg::<Vec<String>>(args, "list")?),
+        "depot_get" => depot_get(),
+        "depot_add" => depot_add(arg::<String>(args, "bus")?, arg::<Option<String>>(args, "paint")?, arg::<Option<String>>(args, "number")?, arg::<String>(args, "name")?, arg::<Option<String>>(args, "group")?),
+        "depot_group_add" => depot_group("add", arg::<String>(args, "name")?, None),
+        "depot_group_rename" => depot_group("rename", arg::<String>(args, "name")?, arg::<Option<String>>(args, "to")?),
+        "depot_group_remove" => depot_group("remove", arg::<String>(args, "name")?, None),
+        "depot_update" => depot_update(arg::<String>(args, "id")?, arg::<Value>(args, "patch")?),
+        "depot_remove" => depot_remove(arg::<String>(args, "id")?),
+        "depot_service" => depot_service(arg::<String>(args, "id")?, arg::<String>(args, "kind")?),
+        "depot_plate" => depot_plate(),
         "notes_get" => notes_get(),
         "notes_save" => notes_save(arg::<String>(args, "key")?, arg::<String>(args, "text")?),
         "preview_look" => preview_look(p, arg::<String>(args, "bus")?, arg::<String>(args, "paint")?, arg::<String>(args, "map")?, arg::<String>(args, "weather")?, arg::<i32>(args, "time")?, arg::<String>(args, "date")?),
@@ -750,6 +880,12 @@ pub fn call_bytes(cmd: &str, args: &Value, p: &dyn Platform) -> Result<Vec<u8>, 
     match cmd {
         "content_picture" => content_picture(&arg::<String>(args, "path")?).ok_or_else(|| "not found".to_string()),
         "route_map" => route_map_bytes(p, arg::<String>(args, "map")?, arg::<String>(args, "date")?, arg::<String>(args, "trip")?, arg(args, "surface")?),
+        "map_ground" => {
+            let mut req = args.clone();
+            req["cmd"] = json!("map_ground");
+            let (_, body) = p.renderer(req, Duration::from_secs(120))?;
+            Ok(body)
+        }
         "preview_frame" => preview_frame(p, arg(args, "w")?, arg(args, "h")?, arg::<Option<bool>>(args, "force")?.unwrap_or(false), arg(args, "dx")?, arg(args, "dy")?, arg(args, "zoom")?, arg(args, "quality")?, arg(args, "view")?),
         _ => Err(format!("unknown command {cmd}")),
     }

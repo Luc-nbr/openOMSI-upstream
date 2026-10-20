@@ -33,6 +33,7 @@ pub mod camera_arm;
 pub mod driver;
 pub mod lights;
 pub mod mapgen;
+pub mod road_paint;
 pub mod money;
 pub mod puddles;
 pub mod rain;
@@ -69,6 +70,7 @@ pub mod tiles;
 pub mod schedule_paper;
 pub mod check;
 pub mod export;
+pub mod camera_util;
 
 pub use staging::*;
 pub use batching::*;

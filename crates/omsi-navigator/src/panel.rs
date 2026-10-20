@@ -10,6 +10,9 @@ use omsi_ui::Vertex;
 
 const PANEL_REACH: f64 = 640.0;
 const PANEL_REBUILD: f64 = 150.0;
+/// The triangles of house models the panel's ground may hold: it is drawn every frame, and rebuilt
+/// as the bus drives.
+const PANEL_MODELS: usize = 30_000;
 
 /// The card behind the next turn (dark in both looks, as a car's guidance banner is).
 const BANNER: Color = Color::rgba(28, 30, 33, 0.95);
@@ -54,10 +57,10 @@ impl Navigator {
         let mut built = None;
         if let Some(job) = self.panel_job.as_ref() {
             match job.poll() {
-                Ok(Some(b)) => {
+                Ok(Some(mut b)) => {
                     let (look, lanes) = job.meta;
-                    let [verts, houses @ ..] = b.counts;
-                    self.roads = Some(Roads { look, anchor: b.anchor, lanes_seen: lanes, verts, houses, built_at: self.time });
+                    let [_, houses @ ..] = b.counts;
+                    self.roads = Some(Roads { look, anchor: b.anchor, lanes_seen: lanes, houses, runs: std::mem::take(&mut b.runs), built_at: self.time });
                     built = Some(b);
                     self.panel_job = None;
                 }
@@ -67,17 +70,17 @@ impl Navigator {
         }
         if rebuild && self.panel_job.is_none() && built.is_none() {
             let anchor = f.bus.truncate();
-            let parts = self.ground_parts(net);
+            let parts = self.ground_parts(net, None);
             let look = GroundLook { surfaces: true, trees: true, dashes: true };
             let reach = PANEL_REACH;
             if self.global.is_some() {
                 let pal2 = pal;
                 let device = renderer.device.clone();
-                self.panel_job = Some(super::build::Job::start((look_key, lanes_now), move || super::build::build(&parts, anchor, reach, &pal2, look, true, true).made_on(&device)));
+                self.panel_job = Some(super::build::Job::start((look_key, lanes_now), move || super::build::build(&parts, anchor, reach, &pal2, look, true, Some(PANEL_MODELS)).made_on(&device)));
             } else {
-                let b = super::build::build(&parts, anchor, reach, &pal, look, true, true);
-                let [verts, houses @ ..] = b.counts;
-                self.roads = Some(Roads { look: look_key, anchor, lanes_seen: lanes_now, verts, houses, built_at: self.time });
+                let mut b = super::build::build(&parts, anchor, reach, &pal, look, true, Some(PANEL_MODELS));
+                let [_, houses @ ..] = b.counts;
+                self.roads = Some(Roads { look: look_key, anchor, lanes_seen: lanes_now, houses, runs: std::mem::take(&mut b.runs), built_at: self.time });
                 built = Some(b);
             }
         }
@@ -168,7 +171,12 @@ impl Navigator {
         self.draw_place_row(&mut ui, Rect::new(0.0, map.bottom(), pw, loc_h), 10.0 * s, s);
         self.draw_cards(&mut ui, f, &wd, net, map, s, &pal);
         if self.schedule {
-            self.draw_schedule(&mut ui, f, Rect::new(0.0, map.bottom() + loc_h, pw, ph - map.bottom() - loc_h), s, &pal);
+            let r = Rect::new(0.0, map.bottom() + loc_h, pw, ph - map.bottom() - loc_h);
+            match self.board {
+                // (a plugin's board: its panel is drawn over the card here)
+                Some(_) => ui.rect(r, pal.card.alpha(1.0)),
+                None => self.draw_schedule(&mut ui, f, r, s, &pal),
+            }
         }
         if self.widget {
             // the corner to pull for another size
@@ -203,21 +211,25 @@ impl Navigator {
         for l in layers.iter_mut() {
             l.opacity *= self.shown;
         }
-        let (ground_n, [shadow_n, solid_n, flat_n]) = self.roads.as_ref().map(|r| (r.verts as u32, r.houses.map(|n| n as u32))).unwrap_or((0, [0; 3]));
+        let solid_n = self.roads.as_ref().map_or(0, |r| r.houses[1] as u32);
         let three = self.show_3d;
         let route_n = self.route_mesh.3;
-        let draws = [
-            Draw { buffer: 2, range: 0..n_bg, layer: 5, texture: 0 },
-            Draw { buffer: 0, range: 0..ground_n, layer: 1, texture: 0 },
-            Draw { buffer: 13, range: 0..if three { 0 } else { flat_n }, layer: 1, texture: 0 },
-            Draw { buffer: 12, range: 0..if three { shadow_n } else { 0 }, layer: 2, texture: 0 },
-            Draw { buffer: 8, range: 0..if three { solid_n } else { 0 }, layer: 3, texture: 0 },
+        let mpp = map_layer.px_scale * self.zoom as f32 * 4.0;
+        let seen = |part: usize, on: bool| match (&self.roads, on) {
+            (Some(r), true) => super::cull::visible(&r.runs[part], vpm, mpp),
+            _ => Vec::new(),
+        };
+        let mut draws = vec![Draw { buffer: 2, range: 0..n_bg, layer: 5, texture: 0 }];
+        for (buffer, part, on, layer) in [(0, 0, true, 1), (13, 3, !three, 1), (12, 1, three, 2), (8, 2, three, 3)] {
+            draws.extend(seen(part, on).into_iter().map(|range| Draw { buffer, range, layer, texture: 0 }));
+        }
+        draws.extend([
             Draw { buffer: 9, range: 0..if three && solid_n > 0 { route_n } else { 0 }, layer: 1, texture: 0 },
             Draw { buffer: 1, range: 0..route_n, layer: 4, texture: 0 },
             Draw { buffer: 2, range: n_bg..n_bg + n_dy, layer: 1, texture: 0 },
             Draw { buffer: 16, range: 0..icon_n, layer: 0, texture: icon_tex },
             Draw { buffer: 2, range: n_ui_start..all.len() as u32, layer: 0, texture: 0 },
-        ];
+        ]);
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("navigator") });
         gpu.render(device, queue, &mut enc, target, size, Some(wgpu::Color::TRANSPARENT), &layers, &draws);
         queue.submit([enc.finish()]);
@@ -341,7 +353,7 @@ impl Navigator {
         };
         let jam_note = (self.jam_cost >= 30.0).then(|| {
             let what = if self.jam_cost >= 60.0 { wd.jam } else { wd.slow };
-            (format!("{what} +{:.0} min", (self.jam_cost / 60.0).max(1.0).round()), if self.jam_cost >= 60.0 { style::TRAFFIC[2] } else { style::TRAFFIC[1] })
+            (format!("{what} +{:.0} {}", (self.jam_cost / 60.0).max(1.0).round(), omsi_ui::tr("min")), if self.jam_cost >= 60.0 { style::TRAFFIC[2] } else { style::TRAFFIC[1] })
         });
         match f.stops.first() {
             Some(st) => {
@@ -368,7 +380,7 @@ impl Navigator {
                 if let Some(d) = self.next_dist {
                     parts.push(units.distance(d));
                     let secs = d / (self.speed_avg.max(5.0) as f64) + if self.jam_cost > 0.0 { self.jam_cost as f64 } else { 0.0 };
-                    parts.push(if secs < 60.0 { "<1 min".to_string() } else { format!("{:.0} min", (secs / 60.0).round()) });
+                    parts.push(if secs < 60.0 { omsi_ui::tr("<1 min").into_owned() } else { format!("{:.0} {}", (secs / 60.0).round(), omsi_ui::tr("min")) });
                 }
                 parts.push(format!("{:02}:{:02}", (st.arrival / 3600.0) as i32 % 24, ((st.arrival % 3600.0) / 60.0) as i32));
                 let line2 = parts.join(" · ");

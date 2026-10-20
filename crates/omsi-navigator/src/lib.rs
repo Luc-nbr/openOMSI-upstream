@@ -23,7 +23,7 @@
 //! their width is in metres near the camera and in pixels far away, so zooming rebuilds
 //! nothing.
 
-use glam::{DVec2, DVec3, Mat4, Vec2, Vec3};
+use glam::{DVec2, DVec3, Mat3, Mat4, Vec2, Vec3};
 use hashbrown::HashMap;
 use omsi_render::{Renderer, Scene, TextureId};
 use omsi_sim::traffic::{LaneKind, Network};
@@ -197,6 +197,8 @@ pub struct NavFrame<'a> {
     /// Seconds of the day and weekday (0 = Monday).
     pub time: f64,
     pub weekday: i32,
+    /// The date of the session (yyyymmdd): which form of each line holds (a map with eras).
+    pub date: i32,
     pub language: &'a str,
     /// Window size in physical pixels.
     pub screen: (f32, f32),
@@ -276,10 +278,9 @@ struct Roads {
     look: u64,
     anchor: DVec2,
     lanes_seen: usize,
-    /// Vertices of the ground (buffer 0) and of the houses: their shadows (buffer 12), standing
-    /// (8) and flat (13).
-    verts: usize,
+    /// Vertices of the houses: their shadows (buffer 12), standing (8) and flat (13).
     houses: [usize; 3],
+    runs: [cull::Runs; 4],
     built_at: f32,
 }
 
@@ -297,6 +298,17 @@ pub struct Navigator {
     /// The next stops with their times under the map (Shift+N cycles map, map and
     /// schedule, off).
     pub schedule: bool,
+    /// A plugin's panel for the board under the map (`anchor = "navigator"`): the height it
+    /// came to (physical pixels; 0 before it is laid out). It takes the stop list's place.
+    pub dock: Option<f32>,
+    /// Where that board is this frame: its top left, width and the most height it may take
+    /// (physical pixels on the window), the navigator's scale, and whether the navigator
+    /// made room for the panel yet. None: no board shown.
+    pub dock_slot: Option<([f32; 4], f32, bool)>,
+    /// A board was asked for once: the lower part opened for it by itself then.
+    dock_seen: bool,
+    /// The board's height in this frame's picture (physical pixels), for `draw`.
+    board: Option<f32>,
     /// Smoothed speed (m/s) for the time to the next stop.
     speed_avg: f32,
     pub opacity: f32,
@@ -369,6 +381,14 @@ pub struct Navigator {
     surface_version: u64,
     /// The surface is drawn (the `nav_surface` setting).
     pub show_surface: bool,
+    /// The terrain view of the city map: contour lines and their heights, where the map's package carries them (a button
+    /// on the map; not kept between runs).
+    pub show_contours: bool,
+    /// How the city map is turned: 0 as the map is drawn, 1 real north up (where the package says which way it lies), 2 the
+    /// heading of the bus up. A click on the compass changes it.
+    pub orient: u8,
+    /// The package the worker of the contour marks was started for (its surface version + 1; 0 = none yet).
+    marks_started: u64,
     /// The light look of the maps (the `nav_light` setting).
     pub light: bool,
     /// The map's own layers (houses, ground, paving: `omsi_scene::mapgen`), once read, and a
@@ -406,6 +426,14 @@ pub struct Navigator {
     trip_paths: HashMap<usize, Option<std::sync::Arc<live::TripPath>>>,
     /// What the package names: icons, names, where the bus is.
     place: place::PlaceView,
+    /// The date of the session (yyyymmdd).
+    date: i32,
+    /// The game's clock (seconds of the day) and weekday (0 = Monday): the timetable lights the next departure.
+    day_clock: (f64, i32),
+    /// The map's timetable for the lines panel, for the date it was read for.
+    times: Option<(i32, std::sync::Arc<line_times::LineTimes>)>,
+    /// The worker reading it (for which date, and where the result comes).
+    times_job: Option<(i32, std::sync::mpsc::Receiver<std::sync::Arc<line_times::LineTimes>>)>,
     /// How far the panel has faded in (Shift+N fades it in and out rather than cutting).
     shown: f32,
     /// The trip's next stops (place, name, the bus's heading there) and where the bus is,
@@ -505,6 +533,10 @@ impl Navigator {
             frames_since_drawn: u32::MAX,
             enabled,
             schedule: false,
+            dock: None,
+            dock_slot: None,
+            dock_seen: false,
+            board: None,
             speed_avg: 8.0,
             opacity: opacity.clamp(0.2, 1.0),
             corner: corner.to_string(),
@@ -544,6 +576,9 @@ impl Navigator {
             surface: None,
             surface_version: 0,
             show_surface: true,
+            show_contours: false,
+            orient: 0,
+            marks_started: 0,
             light: false,
             map_data: None,
             map_version: 0,
@@ -566,6 +601,10 @@ impl Navigator {
             live_tt: HashMap::new(),
             trip_paths: HashMap::new(),
             place: Default::default(),
+            date: 0,
+            day_clock: (0.0, 0),
+            times: None,
+            times_job: None,
             shown: if enabled { 1.0 } else { 0.0 },
             stop_spots: Vec::new(),
             bus_at: DVec3::ZERO,
@@ -1100,6 +1139,9 @@ impl Navigator {
         let start = scene.overlays.len();
         self.frame(renderer, scene, f);
         scene.shift_overlays(start, origin_x);
+        if let Some((r, _, _)) = self.dock_slot.as_mut() {
+            r[0] += origin_x;
+        }
         for rect in [&mut self.panel_rect, &mut self.city.rect] {
             rect[0] += origin_x;
             rect[2] += origin_x;
@@ -1109,6 +1151,8 @@ impl Navigator {
 
     pub fn frame(&mut self, renderer: &Renderer, scene: &mut Scene, f: &NavFrame) {
         self.panel_overlay = None;
+        self.dock_slot = None;
+        self.board = None;
         // (with the navigator off the route is still followed for OMSI 2's arrows)
         if !self.enabled && !self.city.open && !self.arrows && self.shown < 0.01 {
             return;
@@ -1119,6 +1163,8 @@ impl Navigator {
             self.shown = target;
         }
         self.time += f.dt;
+        self.date = f.date;
+        self.day_clock = (f.time, f.weekday);
         if let Some(rx) = self.building.as_ref() {
             if let Ok((net, pos, streets, surface, hints)) = rx.try_recv() {
                 self.name_hints = hints;
@@ -1217,10 +1263,26 @@ impl Navigator {
         let pw = (base * f.ui_scale * self.size.clamp(0.6, 2.0)).min((sh * 0.7).max(300.0) * self.size.clamp(1.0, 2.0)).min(sw * 0.92).round();
         let map_h = (pw * 0.8).round();
         let s = pw / 360.0;
-        let sched = if self.schedule { (f.stops.len().clamp(1, 5) as f32 * 22.0 + 12.0) * s } else { 0.0 };
-        let ph = (map_h + self.place_row_height(s) + sched).round();
+        // (a plugin's board takes the stop list's place, as tall as its panel came to and
+        // as there is room for; asked for the first time, it opens the lower part itself)
+        if self.dock.is_some() && !self.dock_seen {
+            self.dock_seen = true;
+            self.schedule = true;
+        }
+        let loc_h = self.place_row_height(s);
+        let room = (sh - map_h - loc_h - 32.0 * s).max(40.0 * s).round();
+        self.board = self.dock.filter(|_| self.schedule && !self.cockpit_display && self.shown > 0.99).map(|h| h.max(1.0).min(room).round());
+        let sched = match self.board {
+            Some(h) => h,
+            None if self.schedule => (f.stops.len().clamp(1, 5) as f32 * 22.0 + 12.0) * s,
+            None => 0.0,
+        };
+        let ph = (map_h + loc_h + sched).round();
         let (w, h) = (pw as u32, ph as u32);
         let (x0, y0) = self.panel_origin((sw, sh), (pw, ph), f.touch, f.info_rect, f.touch_gap);
+        if self.board.is_some() && !self.city.open {
+            self.dock_slot = Some(([x0, y0 + (map_h + loc_h).round(), pw, room], s, self.dock.is_some_and(|h| h > 0.0)));
+        }
 
         if self.gpu.is_none() {
             self.gpu = Some(Gpu::with_depth(&renderer.device, renderer.format(), map_samples(renderer.format()), self.atlas.size));
@@ -1285,21 +1347,29 @@ fn same_paths(net: &Network, traffic: &Network, l: usize) -> Vec<usize> {
 
 impl<'a> NavFrame<'a> {
     fn clone_ref(&self) -> NavFrame<'a> {
-        NavFrame { traffic: self.traffic, touch: self.touch, players: self.players.clone(), bus: self.bus, heading: self.heading, speed_kmh: self.speed_kmh, outside_temp: self.outside_temp, inside_temp: self.inside_temp, line: self.line.clone(), terminus: self.terminus.clone(), stops: self.stops.clone(), delay: self.delay, passengers: self.passengers, time: self.time, weekday: self.weekday, language: self.language, screen: self.screen, ui_scale: self.ui_scale, follow_window: self.follow_window, dt: self.dt, stop_requested: self.stop_requested, info_rect: self.info_rect, touch_gap: self.touch_gap }
+        NavFrame { traffic: self.traffic, touch: self.touch, players: self.players.clone(), bus: self.bus, heading: self.heading, speed_kmh: self.speed_kmh, outside_temp: self.outside_temp, inside_temp: self.inside_temp, line: self.line.clone(), terminus: self.terminus.clone(), stops: self.stops.clone(), delay: self.delay, passengers: self.passengers, time: self.time, weekday: self.weekday, date: self.date, language: self.language, screen: self.screen, ui_scale: self.ui_scale, follow_window: self.follow_window, dt: self.dt, stop_requested: self.stop_requested, info_rect: self.info_rect, touch_gap: self.touch_gap }
     }
 }
 
 
 pub use omsi_mapdraw::roads::{self, *};
+mod line_times;
+mod lines_panel;
+mod lines_sheet;
+mod orient;
 mod place;
+mod relief;
 mod surface;
 pub use omsi_mapdraw::style;
 pub use omsi_mapdraw as mapmesh;
 mod panel;
 mod live;
 mod build;
+pub use build::{Built, MapGround};
+mod cull;
 mod city_map;
 pub use city_map::*;
+use lines_panel::*;
 #[cfg(test)]
 mod tests;
 
