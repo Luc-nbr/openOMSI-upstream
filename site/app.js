@@ -6,23 +6,26 @@ const PRESENCE = "https://openomsi.savvabestbrother.workers.dev";
 const DOCS = [
   { file: "USER_GUIDE", title: "User guide", icon: "sports_esports" },
   { file: "ANDROID", title: "Android & mobile", icon: "smartphone" },
+  { file: "VR", title: "Virtual reality", icon: "view_in_ar" },
+  { file: "SERVER", title: "Dedicated server", icon: "dns" },
   { file: "MODDING", title: "Modding beyond OMSI 2", icon: "handyman" },
   { file: "PBR", title: "PBR materials", icon: "texture" },
+  { file: "MAP_PACKAGE", title: "Map packages", icon: "map" },
+  { file: "PLUGINS", title: "Plugins", icon: "extension" },
   { file: "BUILDING", title: "Building", icon: "build" },
   { file: "FORMATS", title: "Content formats", icon: "description" },
   { file: "ARCHITECTURE", title: "Architecture", icon: "account_tree" },
   { file: "ROUTES", title: "Routes", icon: "alt_route" },
-  { file: "PLUGINS", title: "Plugins", icon: "extension" },
-  { file: "SERVER", title: "Dedicated server", icon: "dns" },
+  { file: "DEBUG_FLAGS", title: "Debug switches", icon: "bug_report" },
   { file: "VERSIONING", title: "Versioning & releases", icon: "new_releases" },
 ];
 const PLATFORMS = [
-  { key: "windows-x64", name: "Windows", icon: "desktop_windows", note: "64-bit (x64), Windows 10 or newer", os: "windows" },
-  { key: "windows-arm64", name: "Windows on ARM", icon: "desktop_windows", note: "ARM64 (Snapdragon laptops), Windows 11", os: "windows-arm" },
-  { key: "macos-arm64", name: "macOS (Apple silicon)", icon: "laptop_mac", note: "M1 or newer, macOS 11 or newer", os: "mac" },
-  { key: "macos-x64", name: "macOS (Intel)", icon: "laptop_mac", note: "Intel Macs, macOS 11 or newer", os: "mac-intel" },
-  { key: "linux-x64", name: "Linux", icon: "computer", note: "x86-64, Vulkan drivers", os: "linux" },
-  { key: "linux-arm64", name: "Linux on ARM", icon: "computer", note: "ARM64, Vulkan drivers", os: "linux-arm" },
+  { key: "windows-x64", setup: "-setup.exe", name: "Windows", icon: "desktop_windows", note: "64-bit (x64), Windows 10 or newer", os: "windows" },
+  { key: "windows-arm64", setup: "-setup.exe", name: "Windows on ARM", icon: "desktop_windows", note: "ARM64 (Snapdragon laptops), Windows 11", os: "windows-arm" },
+  { key: "macos-arm64", setup: ".dmg", name: "macOS (Apple silicon)", icon: "laptop_mac", note: "M1 or newer, macOS 11 or newer", os: "mac" },
+  { key: "macos-x64", setup: ".dmg", name: "macOS (Intel)", icon: "laptop_mac", note: "Intel Macs, macOS 11 or newer", os: "mac-intel" },
+  { key: "linux-x64", name: "Linux", icon: "computer", note: "x86-64, Vulkan or OpenGL, WebKitGTK 4.1", os: "linux" },
+  { key: "linux-arm64", name: "Linux on ARM", icon: "computer", note: "ARM64, Vulkan or OpenGL, WebKitGTK 4.1", os: "linux-arm" },
   { key: "android-arm64", ext: "apk", name: "Android", icon: "smartphone", note: "arm64 phones and tablets, Android 8.0+", os: "android" },
 ];
 // The dedicated server: no window, for hosting a session (see the Dedicated server page).
@@ -166,14 +169,17 @@ async function download(beta = false) {
   // Each file by its exact name: matched by its ending alone, "-windows-x64.zip" was the
   // dedicated server's zip as well, and the Windows button downloaded the server.
   const card = p => {
-    const file = `openOMSI-${v}-${p.key}.${p.ext || "zip"}`;
-    const a = (rel.assets || []).find(a => a.name === file);
+    const find = name => (rel.assets || []).find(a => a.name === name);
+    const zip = find(`openOMSI-${v}-${p.key}.${p.ext || "zip"}`);
+    const setup = p.setup && find(`openOMSI-${v}-${p.key}${p.setup}`);
+    const a = setup || zip;
     const size = a ? ` · ${(a.size / 1048576).toFixed(0)} MB` : "";
     const mine = p.os && p.os === visitorOs();
     return `<div class="card elevation-${mine ? 3 : 1} dl-card${mine ? " dl-mine" : ""}"><div class="dl-head"><span class="material-icons card-icon">${p.icon}</span>${mine ? `<span class="dl-badge">Your system</span>` : ""}</div>
       <h3>${p.name}</h3><p>${p.note}${size}</p>
       ${a ? `<a class="btn btn-contained" href="${a.browser_download_url}" download><span class="material-icons">download</span>Download</a>`
-          : `<p>Not in this release.</p>`}</div>`;
+          : `<p>Not in this release.</p>`}
+      ${setup && zip ? `<a class="btn btn-outlined" style="margin-top:0" href="${zip.browser_download_url}" download>Portable .zip</a>` : ""}</div>`;
   };
   const games = [...PLATFORMS].sort((x, y) => (y.os === visitorOs()) - (x.os === visitorOs()));
   grid.innerHTML = games.map(card).join("")

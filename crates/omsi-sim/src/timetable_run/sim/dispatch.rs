@@ -33,18 +33,11 @@ impl ScheduleSim {
         self.retry_at.clear();
         self.startup.clear();
         self.later_layover.clear();
-        // (the clock set back over midnight: the day before)
-        while day_time < self.day_base {
-            self.day_base -= DAY;
-            let mut c = self.date_clock.clone();
-            if c.day_of_year > 1 {
-                c.day_of_year -= 1;
-            } else {
-                c.year -= 1;
-                c.day_of_year = crate::clock::days_in_year(c.year);
-            }
-            self.date_clock = c.clone();
-            self.set_day(&c);
+        // Skip directly to the requested date, rather than rebuilding the timetable
+        // once for every intervening day (hundreds of reassignments on year jumps).
+        if day_time.is_finite() && day_time < self.day_base {
+            let days_back = ((self.day_base - day_time) / DAY).ceil() as i64;
+            self.shift_calendar_days(-days_back);
         }
         self.roll_day(day_time);
         for i in 0..self.departures.len() {
@@ -306,6 +299,13 @@ impl ScheduleSim {
             // only a trip with stops has a first stop to wait at: a flight (TXL.ttl, every
             // ten minutes) would take off early
             if !trip_has_stations(&self.data.trips[d.trip]) {
+                continue;
+            }
+            // nor one that does not begin at a stop: one that comes in from the map's edge
+            // first stood at the start of its track early, in the way of the trains coming
+            // in (X10 Berlin's S7 trains, edge to edge through Zoologischer Garten, put out
+            // a quarter of an hour early)
+            if !self.times_of(i).begins_at_stop() {
                 continue;
             }
             let prev_end = self.dep_time(k) + self.times_of(k).duration;

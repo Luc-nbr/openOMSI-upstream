@@ -8,6 +8,7 @@
 //! tells the page when they changed, `instances` keeps track of the games started.
 
 pub mod crash;
+pub mod depot;
 pub mod index;
 pub mod install;
 pub mod instances;
@@ -762,6 +763,55 @@ pub struct MapInfo {
     /// Installed as a mod (in the content folder).
     #[serde(default)]
     pub installed: bool,
+    /// The years the map's `[years]` (global.cfg) allows, first and last, when it sets any;
+    /// a date outside them is moved in ([`fit_date_to_years`]).
+    #[serde(default)]
+    pub year_span: Option<(i32, i32)>,
+}
+
+/// The span of years a map's `[years]` allows: none for `0 0`; no first year when the first
+/// is 0, no last when the last is 0 or before the first.
+fn year_span_of(g: &omsi_map::GlobalCfg) -> Option<(i32, i32)> {
+    match g.years {
+        (first, last) if first <= 0 && last <= 0 => None,
+        (first, last) => {
+            let from = if first > 0 { first } else { i32::MIN };
+            let to = if last > 0 && last >= from { last } else { i32::MAX };
+            Some((from, to))
+        }
+    }
+}
+
+fn is_leap_year(y: i32) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// `date` (YYYY-MM-DD) fitted to a map's year span, as OMSI 2 starts a map on a day it
+/// allows so that its AI lists, chrono and timetables fit: the same day in the nearest
+/// allowed year (29 February becomes the 28th where that year has none). A date inside the
+/// span, or one that is no date, is kept.
+pub fn fit_date_to_years(date: &str, span: Option<(i32, i32)>) -> String {
+    let mut fields = date.trim().splitn(3, '-').map(|f| f.trim().parse::<i32>());
+    let (Some((from, to)), Some(Ok(year)), Some(Ok(month)), Some(Ok(day))) = (span, fields.next(), fields.next(), fields.next()) else {
+        return date.to_string();
+    };
+    if (from..=to).contains(&year) {
+        return date.to_string();
+    }
+    let year = year.clamp(from, to);
+    let day = if (month, day) == (2, 29) && !is_leap_year(year) { 28 } else { day };
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// The `--date` of a duty: the date the player chose as it stands. Only a date taken from
+/// the machine's calendar (`use_real_date`) is fitted to the map's `[years]` - an old saved
+/// duty or a manually picked year must not be moved behind the player's back.
+fn date_for_game(date: &str, real_date: bool, span: Option<(i32, i32)>) -> String {
+    if real_date {
+        fit_date_to_years(date, span)
+    } else {
+        date.to_string()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -850,7 +900,7 @@ fn read_map(d: &Path, folder: &str, lang: &str) -> (Option<MapInfo>, Vec<PathBuf
     }
     // (the depot groups' first: a plain car group's name line is no depot)
     let hof = omsi_map::ailists::AiLists::load(&d.join("ailists.cfg")).ok().and_then(|l| l.groups.iter().filter(|g| g.is_depot).chain(l.groups.iter()).find_map(|g| g.hof.clone())).unwrap_or_default();
-    (Some(MapInfo { name: if g.name.trim().is_empty() { folder.to_string() } else { g.name.trim().to_string() }, friendly, file: format!("maps/{folder}/global.cfg"), description, entry_points: entries, hof, installed: in_content(d) }), deps)
+    (Some(MapInfo { name: if g.name.trim().is_empty() { folder.to_string() } else { g.name.trim().to_string() }, friendly, file: format!("maps/{folder}/global.cfg"), description, entry_points: entries, hof, installed: in_content(d), year_span: year_span_of(&g) }), deps)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1579,6 +1629,7 @@ pub struct IbisInfo {
     pub hof: String,
     pub line_code: String,
     pub routes: Vec<IbisRoute>,
+    pub trip_route: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -1590,7 +1641,7 @@ pub struct IbisRoute {
     pub terminus: String,
 }
 
-pub fn ibis_info(bus: &str, hof_name: &str, line: &str) -> Result<IbisInfo> {
+pub fn ibis_info(bus: &str, hof_name: &str, line: &str, terminus: &str, stops: &[String]) -> Result<IbisInfo> {
     let bus_path = resolve_content(bus)?;
     let dir = bus_path.parent().context("bus folder")?;
     // the bus's own depot file of that name (every content root's copy of its folder), else
@@ -1611,7 +1662,9 @@ pub fn ibis_info(bus: &str, hof_name: &str, line: &str) -> Result<IbisInfo> {
         let terminus = hof.termini.iter().find(|x| x.code == code).and_then(|x| x.strings.first().cloned()).unwrap_or_default();
         routes.push(IbisRoute { code: t.code.clone(), route: t.route.clone(), name: t.name.clone(), terminus_code: code, terminus });
     }
-    Ok(IbisInfo { hof: hof.name.clone(), line_code: line_digits, routes })
+    let stops: Vec<&str> = stops.iter().map(String::as_str).collect();
+    let trip_route = (!terminus.trim().is_empty()).then(|| omsi_vehicle::hof::trip_terminus(hof, line, terminus, &stops)).flatten().and_then(|(_, r)| r).map(|r| hof.info_trips[r].code.clone());
+    Ok(IbisInfo { hof: hof.name.clone(), line_code: line_digits, routes, trip_route })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2687,6 +2740,9 @@ pub struct Duty {
     /// A situation file to continue (the map's `laststn.osn`): nothing else of the duty.
     #[serde(default)]
     pub situation: Option<String>,
+    /// The depot bus driven: it starts with the wear it was left with (see [`depot`]).
+    #[serde(default)]
+    pub depot: Option<String>,
 }
 
 /// The situation the game left on `map` last (`laststn.osn` in the map's folder: the
@@ -2870,6 +2926,9 @@ fn duty_args_for_root(d: &Duty, root: &Path) -> Result<Vec<String>> {
     if let Some(n) = d.number.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         a.extend(["--number".into(), n.to_string()]);
     }
+    if let Some(id) = d.depot.as_deref().map(str::trim).filter(|i| !i.is_empty()) {
+        a.extend(["--depot".into(), id.to_string()]);
+    }
     // (a vehicle file taken for a depot from a broken ailists.cfg by older launchers is none)
     if let Some(h) = d.hof.as_deref().filter(|h| !h.trim().is_empty() && !h.to_ascii_lowercase().contains(".bus") && !h.to_ascii_lowercase().contains(".ovh")) {
         a.extend(["--hof".into(), h.trim().to_string()]);
@@ -2904,7 +2963,17 @@ fn duty_args_for_root(d: &Duty, root: &Path) -> Result<Vec<String>> {
         date = Some(format!("{year:04}-{mo:02}-{dd:02}"));
     }
     if let Some(dt) = date {
-        a.extend(["--date".into(), dt]);
+        // (only the machine's calendar is fitted to the map's [years], so that its AI lists,
+        // chrono and timetables fit; the date the player chose in the launcher stays)
+        let real_date = on("use_real_date");
+        let span = if real_date {
+            let file = root.join(&d.map);
+            let file = if file.is_file() { file } else { resolve_content(&d.map).unwrap_or(file) };
+            omsi_map::GlobalCfg::load(&file).ok().and_then(|g| year_span_of(&g))
+        } else {
+            None
+        };
+        a.extend(["--date".into(), date_for_game(&dt, real_date, span)]);
     }
     if let Some(w) = d.weather.as_deref().filter(|x| !x.trim().is_empty()) {
         a.extend(["--weather".into(), w.trim().to_string()]);
@@ -3048,7 +3117,7 @@ pub fn cli(cmd: &str, arg: &str) -> Result<Value> {
         "vehicles" => serde_json::to_value(list_vehicles()?)?,
         "weather" => serde_json::to_value(list_weather()?)?,
         "lines" => serde_json::to_value(list_lines(&s("map"), &s("date"))?)?,
-        "ibis" => serde_json::to_value(ibis_info(&s("bus"), &s("hof"), &s("line"))?)?,
+        "ibis" => serde_json::to_value(ibis_info(&s("bus"), &s("hof"), &s("line"), &s("terminus"), &serde_json::from_value::<Vec<String>>(a.get("stops").cloned().unwrap_or_default()).unwrap_or_default())?)?,
         "profiles" => serde_json::to_value(list_profiles()?)?,
         "profile" => serde_json::to_value(get_profile(&s("name"))?)?,
         "mods" => {
