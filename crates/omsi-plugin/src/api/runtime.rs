@@ -213,8 +213,8 @@ pub struct PluginState {
     pub settings: super::fns::plugin::Settings,
     /// Sounds it started (stopped when it stops).
     pub voices: Vec<u64>,
-    /// It left the IBIS to the driver (`duty.set_auto_ibis(false)`): the game types it again
-    /// once the plugin goes ([`PluginState::give_back`]).
+    /// It left the IBIS to the driver (`duty.set_auto_ibis(false)`): its hold on the IBIS is
+    /// let go once the plugin goes ([`PluginState::give_back`]), other plugins' holds stay.
     pub ibis_held: bool,
 }
 
@@ -269,10 +269,11 @@ impl PluginState {
     }
 
     /// What the plugin changed in the game that lasts beyond its own calls, given back as it
-    /// goes (stopped, failed or switched off): the IBIS typed by the game again.
+    /// goes (stopped, failed or switched off): its own hold on the IBIS (the game types it
+    /// again once no other plugin holds it).
     pub fn give_back(&mut self, io: &mut dyn PluginIo) {
         if std::mem::take(&mut self.ibis_held) {
-            io.duty_set_auto_ibis(true);
+            io.duty_set_auto_ibis(self.owner, true);
         }
     }
 

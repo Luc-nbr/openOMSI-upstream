@@ -320,9 +320,10 @@ pub trait PluginIo {
     fn duty_end(&mut self) -> bool {
         false
     }
-    /// Whether the game types the duty's trips into the bus's IBIS by itself (Shift+U, each
-    /// new trip); false without a bus.
-    fn duty_set_auto_ibis(&mut self, _on: bool) -> bool {
+    /// Plugin `owner` leaves the IBIS of the bus to the driver (`on` false) or gives it back
+    /// (`on` true): the game types the duty's trips into it by itself (Shift+U, each new trip)
+    /// only while no plugin leaves it to the driver. False without a bus.
+    fn duty_set_auto_ibis(&mut self, _owner: u64, _on: bool) -> bool {
         false
     }
     /// Type the trip under way into the bus's IBIS now; false without a duty or a bus.

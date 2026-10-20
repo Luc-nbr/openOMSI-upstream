@@ -78,10 +78,10 @@ pub static FNS: &[ApiFn] = &[
         Ok::<_, ApiError>(super::core::ok_or_reason(c.io().duty_start(&line, &tour, trip, stop)))
     }),
     def!("duty.finish", "duty", [], "boolean", "Gives the duty up (the bus drives on without a timetable); `true` when there was one.", NEW, WorldWrite, false, |c, a| c.io().duty_end()),
-    def!("duty.set_auto_ibis", "duty", [p("on", "bool")], "boolean", "Whether the game types the duty into the bus's IBIS by itself - line, route, destination and the stop, at Shift+U and `--autostart` and again as each trip begins (on as a bus is taken). Off, the driver types them, or the plugin with `duty.type_ibis`. For the bus the player drives now, and while the plugin runs: when it stops or is switched off the game types the IBIS again. `true` when there is a bus.", V36, VehicleWrite, false, |c, a| {
+    def!("duty.set_auto_ibis", "duty", [p("on", "bool")], "boolean", "Whether the game types the duty into the bus's IBIS by itself - line, route, destination and the stop, at Shift+U and `--autostart` and again as each trip begins (on as a bus is taken). Off, the driver types them, or the plugin with `duty.type_ibis`. For the bus the player drives now, and while the plugin runs: when it stops or is switched off the game types the IBIS again, unless another plugin still leaves it to the driver. `true` when there is a bus.", V36, VehicleWrite, false, |c, a| {
         let on = a.flag(0, true);
         let (io, s) = c.both();
-        let done = io.duty_set_auto_ibis(on);
+        let done = io.duty_set_auto_ibis(s.owner, on);
         if done {
             s.ibis_held = !on;
         }
