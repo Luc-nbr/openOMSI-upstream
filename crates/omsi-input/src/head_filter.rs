@@ -176,9 +176,11 @@ impl HeadFilter {
                     }
                 }
             }
-            from[0] = wrap(from[0]);
             let mut to = v;
-            to[0] = from[0] + wrap(v[0] - from[0]);
+            for i in 0..3 {
+                from[i] = wrap(from[i]);
+                to[i] = from[i] + wrap(v[i] - from[i]);
+            }
             if self.snap {
                 (from, to, self.out, self.slow, before) = (v, v, v, v, None);
                 self.snap = false;
@@ -202,7 +204,7 @@ impl HeadFilter {
                     3..=5 => (p.knee[1], p.dead[1], p.tau[1]),
                     _ => (0.0, 0.0, 0.02),
                 };
-                let diff = |a: f32, b: f32| if i == 0 { wrap(a - b) } else { a - b };
+                let diff = |a: f32, b: f32| if i < 3 { wrap(a - b) } else { a - b };
                 // (a real movement: the pose aimed at gets away from its slow average - told by
                 // the head alone, not by the view, which made it swing)
                 self.slow[i] += diff(target[i], self.slow[i]) * ease;
@@ -220,8 +222,10 @@ impl HeadFilter {
                 let k = g.max(self.hold[i]);
                 self.out[i] += d.signum() * m * (1.0 - (-k * h / tau).exp());
             }
-            self.out[0] = wrap(self.out[0]);
-            self.slow[0] = wrap(self.slow[0]);
+            for i in 0..3 {
+                self.out[i] = wrap(self.out[i]);
+                self.slow[i] = wrap(self.slow[i]);
+            }
         }
         Some(self.pose())
     }
@@ -530,6 +534,30 @@ mod tests {
             assert!(w[1].yaw.abs() <= 180.0);
         }
         assert!((wrap(r.last().unwrap().yaw - 210.0)).abs() <= 1.5, "{}", r.last().unwrap().yaw);
+    }
+
+    /// Every rotation channel crosses the boundary along the shortest arc, both ways.
+    #[test]
+    fn all_rotations_take_the_short_arc() {
+        for axis in 0..3 {
+            for sign in [-1.0, 1.0] {
+                let start = Instant::now();
+                let mut filter = HeadFilter::default();
+                let mut previous: Option<f32> = None;
+                for frame in 0..216u64 {
+                    let t = frame as f32 / 144.0;
+                    let mut rot = [0.0; 3];
+                    rot[axis] = wrap(sign * (150.0 + 40.0 * t));
+                    let sample = Sample { pose: HeadPose { rot, pos: [0.0; 3] }, gain: [1.0; 3], edge: 0.0, seq: frame, at: start + Duration::from_secs_f32(t), interval: 1.0 / 144.0, tobii: false };
+                    let out = filter.step(Some(&sample), sample.at, Params::OPENTRACK).unwrap().rot[axis];
+                    if let Some(was) = previous.filter(|_| t >= 0.3) {
+                        assert!(wrap(out - was).abs() < 1.0, "axis {axis}: {was} -> {out}");
+                    }
+                    previous = Some(out);
+                }
+                assert!(wrap(previous.unwrap() - sign * 210.0).abs() < 2.0, "axis {axis}: {previous:?}");
+            }
+        }
     }
 
     /// In "auto", opentrack's poses giving way to a Tobii tracker's (and back) for the same
