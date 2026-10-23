@@ -74,11 +74,13 @@ impl Player {
     /// auto-start is done. Not while a plugin leaves the IBIS to the driver
     /// (`duty.set_auto_ibis`): the driver types line, route and destination.
     pub(crate) fn set_duty_destination(&mut self, trip: &schedule::PlannedTrip, stop: usize) {
+        // Remember the duty even while a plugin holds automatic entry: the next trip
+        // must resume automatic entry once the last hold is released.
+        self.duty_typed = true;
         if !self.ibis_auto() {
             log::info!("IBIS: line {} to {} left for the driver to type", trip.line.trim(), trip.terminus.trim());
             return;
         }
-        self.duty_typed = true;
         let stops: Vec<String> = trip.stops.iter().map(|s| s.name.clone()).collect();
         let name = trip
             .stops
