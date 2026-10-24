@@ -80,6 +80,8 @@ struct PostPipelines {
     tonemap: wgpu::RenderPipeline,
     tonemap_encoded: wgpu::RenderPipeline,
     fxaa: wgpu::RenderPipeline,
+    /// The picture as absolute radiance at half size, for the next frame's bounced light.
+    history: wgpu::RenderPipeline,
 }
 
 /// The pipelines of the main pass for one colour target format: the swap chain's, and
@@ -134,6 +136,9 @@ pub struct Renderer {
     /// read a depth texture texel by texel - the pipelines failed there, AO off or not (#422).
     ssao_pipeline: Option<wgpu::RenderPipeline>,
     blur_pipeline: Option<wgpu::RenderPipeline>,
+    /// (into two-channel targets: see `pipelines::ssao::Ssao`)
+    plain_ssao_pipeline: Option<wgpu::RenderPipeline>,
+    plain_blur_pipeline: Option<wgpu::RenderPipeline>,
     /// The settings this renderer was built with.
     pub options: RenderOptions,
     puddles: Option<puddles::Pipelines>,
@@ -268,6 +273,12 @@ pub struct RenderOptions {
     /// The mirrors of an Enhanced picture are shaded as the picture is (the settings'
     /// `mirror_quality=enhanced`), not with the plain light (see `Renderer::render_inner`).
     pub mirror_enhanced: bool,
+    /// The mirrors show the sun's shadows (the window's shadow maps, as they were last drawn,
+    /// are looked up from the mirror's camera: no shadow pass of their own).
+    pub mirror_shadows: bool,
+    /// The mirrors show the smoke and spray particles as the window last had them (OMSI's
+    /// `No PS in reflections`, turned round).
+    pub mirror_particles: bool,
     /// Only the meshes the models mark `[shadow]` cast sun shadows, as in OMSI 2 (else every
     /// solid mesh does).
     pub omsi_shadow_casters: bool,
@@ -292,6 +303,11 @@ pub struct RenderOptions {
     /// reflections, where the device can trace rays (hardware ray queries); elsewhere the
     /// enhanced picture as it is.
     pub ray_tracing: bool,
+    /// The Enhanced picture's street-scale light: the sky's occlusion by houses and trees
+    /// over 18 m, and the light the surfaces send to each other (the settings'
+    /// `street_light`). `None`: as the chip allows (off on a small or shared one, see
+    /// `gpu_memory::lighter_picture`).
+    pub street_light: Option<bool>,
     pub max_scene: Option<(u32, u32)>,
 }
 
@@ -309,12 +325,15 @@ impl Default for RenderOptions {
             min_obj_size: 0.013,
             max_obj_dist: 0.0,
             mirror_enhanced: false,
+            mirror_shadows: false,
+            mirror_particles: false,
             omsi_shadow_casters: false,
             shadow_blobs: true,
             reflections: true,
             no_enhanced: false,
             preview_only: false,
             ray_tracing: false,
+            street_light: None,
             max_scene: None,
         }
     }
