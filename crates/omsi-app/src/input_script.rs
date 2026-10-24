@@ -570,7 +570,7 @@ impl App {
                                 p.set_duty_destination(trip, stop);
                                 // (a plugin leaves the IBIS to the driver: said, so that an
                                 // empty IBIS does not look broken)
-                                if !p.ibis_auto() && msg == "Putting the vehicle into service ..." {
+                                if !p.ibis_auto() && p.putting_into_service() {
                                     msg = "Putting the vehicle into service ... A plugin leaves the IBIS for you to type.".to_string();
                                 }
                             }

@@ -788,6 +788,11 @@ impl Player {
         }
     }
 
+    /// An auto-start is under way putting the bus into service (not switching it off).
+    pub(crate) fn putting_into_service(&self) -> bool {
+        self.startup.as_ref().is_some_and(|s| !s.shutting_down())
+    }
+
     /// The vehicle actions `Inputs/keyboard.cfg` puts on keys.
     pub(crate) fn bound_actions(&self) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
