@@ -259,6 +259,15 @@ and whether the bus came late (over 3 minutes), left early (over 2 minutes, as t
 file counts them) or missed a stop. It is written again at every stop, so a crash loses
 nothing - what virtual bus companies ask their drivers for.
 
+### Trolleybuses
+
+A map with an overhead wire (`trolley.txt`) and a bus with poles (`[trolley_pole]`) make a trolleybus
+that moves only on current. Put the poles on the wire from outside the bus: get out (Ctrl+Shift+G, the
+`get_up` setting) or use the outside camera (F3), go to the back of the bus, hold **R** and look at the
+wire (the pole nearest to you rises and follows your look), let go of R when the boom is under the wire.
+**T** pulls the nearest pole down; Shift with R or T takes both poles. Poles with a motor go up and down
+from the cab with R and T. Details, the formats and the checks: [TROLLEYBUS.md](TROLLEYBUS.md).
+
 ## The launcher
 
 The launcher is a program of its own beside the game, `openomsi-launcher-app` (a Tauri window,
@@ -316,10 +325,10 @@ The menu on the left groups the pages: **Play** (Drive, Multiplayer, Running gam
   **Discord Rich Presence** (Settings → General, on by default) shows the launcher or your
   map, bus, line and multiplayer status in Discord; Discord must be running on the same
   computer.
-  **Voice chat through GreenTeaSpeak** (on by default): in multiplayer, the other players
-  are heard from where they are, when GreenTeaSpeak 2 runs with the openOMSI plugin and the
-  server names a voice server (see [SERVER.md](SERVER.md) and
-  `tools/greenteaspeak-plugin/README.md`).
+  **Voice chat** (Settings → Sound, off by default): in multiplayer, hold *Voice: nearby*
+  (V) to be heard by the players close to you, or *Voice: radio* (B) to be heard by the whole
+  session; the keys are in Controls. Switching it on makes the system ask for the
+  microphone. See [VOICE.md](VOICE.md).
 * **Controls** - `Inputs/keyboard.cfg`: click a key, press the new one; clashes are red. The
   keys and the game controllers are kept in `~/.openomsi/Inputs` (on Windows
   `C:\Users\<you>\.openomsi\Inputs`), so an update or a new program folder keeps them; keys
@@ -511,9 +520,26 @@ real phase and lights the night through the same atmosphere; the stars show wher
 is dark enough, and a city's lamps light its own haze and clouds (brightest on an overcast
 night). The clouds are a volume marched through in steps; `cloud_quality=low` (Graphics:
 Cloud quality) takes fewer of them - the same clouds a little grainier at their edges, for
-less of the GPU's time (on an M4 at 1080p about 0.8 ms of a frame). The camera exposes like one: for daylight, part of the way towards the light of the
+less of the GPU's time (on an M4 at 1080p about 0.8 ms of a frame). The shade of houses and trees over a whole street and the light the surfaces send to each other (Graphics: Street light, `street_light=auto|on|off`) cost about half a millisecond a frame on an M4 at 1080p. Off is the default; On enables them, Auto enables them except on a small or shared graphics chip, and the quality optimiser turns them off when the GPU is the limit. The camera exposes like one: for daylight, part of the way towards the light of the
 moment, with a camera's middle-tone contrast; street lamps are bright points with a little
 glare in clear air and wide halos in mist and rain.
+
+Every light that lights the street casts a shadow (Enhanced and Enhanced+): the twenty street
+lamps, floodlights and platform lights lighting the view most each have a shadow map that looks
+down from their head, the headlamps of the player's bus and of the cars in front of the camera
+one that looks along the road, and the lamps of the player's own saloon sixteen more, drawn in
+the bus's own frame so that they hold still while the bus drives (they hold what stands still in
+the bus: the seats, the rails, the panels; what moves - the wheels, the steering wheel, a door
+that swings, the people - is left out until it stops). A pole, a car, a wall or a handrail
+keeps the light of a lamp off what lies behind it, and the beams the lamps make in fog, rain
+and snow are cut by the same maps. The ground is lit by those lamps and by nothing else - the
+baked lamp pools of the map (the tile light maps, drawn through walls and without shadow)
+belong to Vanilla and Vanilla+. The maps are drawn once and kept while nothing in them
+moves (a tile with a tree in the wind in it every third frame), and they take memory only in
+the Enhanced modes: about 8 MB at the default shadow size 2048, 33 MB at 4096. *Mirror
+quality* (Graphics) *As the picture* draws the mirrors of an Enhanced picture with its light, sky
+and sun shadows, *Standard* (the default) with the plain light, which costs a weak card less.
+`OMSI_NO_CABIN_SHADOWS=1` leaves the saloon's lamps without shadows for an A/B.
 
 `graphics=enhanced_plus` (Enhanced+ in the launcher, `--enhanced-plus`) is Enhanced with
 hardware ray tracing, where the graphics card traces rays (Apple M3/M4 and newer, RTX and
@@ -559,6 +585,13 @@ throw spray and fills the air with the full curtain of falling streaks; **Medium
 glass 15 times a second, keeps only your own bus's spray and draws half the streaks; **Low**
 shows OMSI 2's own texture rain on the glass instead of the drops (from the next bus loaded),
 throws no spray and draws a quarter of the streaks.
+
+Graphics → *Vehicle smoke* (`vehicle_smoke`) chooses **All vehicles** (`all`, the default),
+**Player only** (`player`, your bus and its articulated sections), or **Off** (`off`).
+It hides non-glowing smoke particles from the other vehicles (including AI cars and LAN
+players), or from every vehicle when Off. Scenery smoke, glowing effects and rain spray
+keep their own settings and behaviour. The choice takes effect immediately and changes
+visibility only; particle simulation continues.
 
 The wet roads' reflections - the puddles mirroring the street, in every graphics mode once
 the roads are wet and the reflection maps are on - cost a good share of a weak card's frame
@@ -645,12 +678,16 @@ vehicle folder and `HOFs/` contain the same file name, the vehicle's own copy ta
 priority (the launcher's depot list shows the shared ones after the bus's own).
 
 A map names the depot files its buses need in `maps/<map>/ailists.cfg`. When a mod map is
-installed in the openOMSI content folder and one of those files is missing from `HOFs/`, the
-launcher copies it there from the map's folder or from any bus that brought it, so every
-bus, the stock ones included, can use the map's depot without copying `.hof` files by hand.
-The copy belongs to the map's mod: switching the map off or removing it takes the copy with
-it. The original OMSI installation is not changed. A depot file the map needs that no
-installed content provides, or a copy that failed, is shown as a warning on the launcher's
+installed in the openOMSI content folder and some of those files are missing from `HOFs/`, the
+launcher's **Mods** page asks whether to share them with every bus. **Share with every bus**
+copies them there from the map's folder or from any bus that brought them, so every bus, the
+stock ones included, can use the map's depot without copying `.hof` files by hand. **Not for
+this map** leaves them where they are: some maps (Grand Paris Moulon, for example) have one
+depot per company or per bus, and buses with their own IBIS show wrong destinations with
+another one. Without the copy, a bus that lacks a depot still finds it in the map's folder,
+and when you choose a line the launcher picks the bus's or the map's depot that carries it.
+The copy belongs to the map's mod: switching the map off or removing it takes the copy with it. The original OMSI installation is not changed. A depot file the map needs
+that no installed content provides is shown as a warning on the launcher's
 **Mods** page. The **Add HOF files to buses** button on that page (desktop launcher) copies
 `.hof` files you choose into the content folder's `HOFs/`; files already there are left
 untouched.
@@ -800,8 +837,9 @@ untouched. They are `radio_speaker`, `radio_hiss` and `radio_dropouts` (0..1) in
 
 **When nothing plays.** `~/.openomsi/game.log` says what happened:
 `radio: 23 stations` (the list), `radio: station 1 Radiozurnal (https://…)` (a button
-pressed), then `Radio 1: Radiozurnal - buffering …` and the song, or `no signal (…)` with
-the reason - mostly an address that is not a stream or a station that is down. No `radio:
+pressed), then `Radio 1 plays Radiozurnal (buffering …)` and the song, or `no signal`
+with the reason in a `radio <url>: …` line - mostly an address that is not a stream or a
+station that is down. No `radio:
 station` line at all means the bus's radio sets neither variable.
 
 ## Performance
@@ -816,7 +854,7 @@ much of the graphics card the game may use in all (textures, models and the pict
 textures and tiles that give everything back when they unload.
 
 For measuring: `OMSI_PROFILE=1` logs the time each stage of the frame takes, and with
-`--exit-after N` (quit after N seconds) it writes a summary at the end - frame-time
+`--exit-after N` (quit after N seconds), or when you close the game, it writes a summary at the end - frame-time
 percentiles and the number of frames over 16.7, 33.3, 50 and 100 ms, counted from 15 s
 after the map has loaded. `OMSI_PROFILE_JSON=<file>` also writes the summary to a file.
 

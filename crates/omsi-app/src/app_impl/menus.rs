@@ -1,6 +1,7 @@
 //! The game menu (Esc): its lines, its keys, the mouse wheel on it and what its lines do.
 
 use super::*;
+use std::borrow::Cow;
 
 impl App {
     /// What the cursor points at, for the HUD. Recomputed every frame: the head turns and
@@ -16,6 +17,7 @@ impl App {
         if self.net.lan.is_none() {
             self.paused = true;
         }
+        self.shell.pause_category = Default::default();
         self.menus.game_menu = Some(0);
         self.menus.menu_top = None;
         self.menus.menu_kbd = true;
@@ -24,6 +26,14 @@ impl App {
 
     pub(crate) fn close_game_menu(&mut self) {
         self.menus.key_capture = None;
+        if self.menus.menu_edit_number {
+            if let Some(w)=self.window.as_ref(){w.set_ime_allowed(false);}
+            self.menus.menu_edit_number=false; self.menus.menu_edit=None;
+        }
+        if self.menus.menu_edit_ident {
+            if let Some(w)=self.window.as_ref(){w.set_ime_allowed(false);}
+            self.menus.menu_edit_ident=false; self.menus.menu_edit=None;
+        }
         if self.menus.menu_edit_icao {
             if let Some(w)=self.window.as_ref(){w.set_ime_allowed(false);}
             self.menus.menu_edit_icao=false; self.menus.menu_edit=None;
@@ -60,7 +70,6 @@ impl App {
             self.chooser_key(code);
             return;
         }
-        let n = self.game_menu_items().len();
         let sel = self.menus.game_menu.unwrap_or(0);
         let modified = self.input.keys.iter().any(|key| {
             matches!(*key, KeyCode::ControlLeft | KeyCode::ControlRight | KeyCode::AltLeft | KeyCode::AltRight | KeyCode::ShiftLeft | KeyCode::ShiftRight)
@@ -70,11 +79,49 @@ impl App {
             // P changes only the simulation state, even while a menu is open.
             KeyCode::KeyP if !modified => self.toggle_pause(),
             KeyCode::Escape => self.close_game_menu(),
-            KeyCode::ArrowUp | KeyCode::KeyW => self.menus.game_menu = Some(self.menu_step(sel, n, false)),
-            KeyCode::ArrowDown | KeyCode::KeyS => self.menus.game_menu = Some(self.menu_step(sel, n, true)),
+            KeyCode::ArrowUp | KeyCode::KeyW => self.menus.game_menu = Some(self.pause_menu_step(sel, false)),
+            KeyCode::ArrowDown | KeyCode::KeyS => self.menus.game_menu = Some(self.pause_menu_step(sel, true)),
+            KeyCode::ArrowLeft | KeyCode::KeyA if !self.vr_active() => self.step_pause_category(false),
+            KeyCode::ArrowRight | KeyCode::KeyD if !self.vr_active() => self.step_pause_category(true),
+            KeyCode::Tab if !self.vr_active() => {
+                let backwards = self.input.keys.contains(&KeyCode::ShiftLeft) || self.input.keys.contains(&KeyCode::ShiftRight);
+                self.step_pause_category(!backwards);
+            }
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => self.menu_choose(event_loop, sel),
             _ => {}
         }
+    }
+
+    /// The category is only a view of the permission-filtered menu, never a second action list.
+    pub(crate) fn switch_pause_category(&mut self, category: crate::shell::pause::navigation::Category) {
+        let menu = self.game_menu_items();
+        let ids: Vec<_> = menu.iter().map(|line| line.0).collect();
+        if !crate::shell::pause::navigation::Category::available(&ids).contains(&category) {
+            return;
+        }
+        self.close_list();
+        self.shell.pause_category = category;
+        self.menus.game_menu = Some(category.indices(&ids).first().copied().unwrap_or(0));
+        self.shell.last_sel = None;
+    }
+
+    fn step_pause_category(&mut self, forward: bool) {
+        let menu = self.game_menu_items();
+        let ids: Vec<_> = menu.iter().map(|line| line.0).collect();
+        let categories = crate::shell::pause::navigation::Category::available(&ids);
+        let current = categories.iter().position(|c| *c == self.shell.pause_category).unwrap_or(0);
+        let next = if forward { (current + 1) % categories.len() } else { (current + categories.len() - 1) % categories.len() };
+        self.switch_pause_category(categories[next]);
+    }
+
+    fn pause_menu_step(&self, from: usize, down: bool) -> usize {
+        let menu = self.game_menu_items();
+        if self.vr_active() {
+            return self.menu_step(from, menu.len(), down);
+        }
+        let ids: Vec<_> = menu.iter().map(|line| line.0).collect();
+        let indices: Vec<_> = self.shell.pause_category.focus_indices(&ids).into_iter().filter(|k| !self.menu_item_off(*k)).collect();
+        crate::shell::pause::navigation::step(&indices, from, down).unwrap_or(from)
     }
 
     /// The open drop-down's scroll bar held with the mouse at height `y`: the first entry
@@ -100,6 +147,7 @@ impl App {
     pub(crate) fn menu_wheel(&mut self, amount: f32) {
         // (the pause menu of the launcher's toolkit scrolls what is under the mouse itself)
         if self.shell_takes_mouse() {
+            self.menus.menu_kbd = false;
             self.shell.wheel(amount);
             return;
         }
@@ -177,6 +225,7 @@ impl App {
                 self.copy_server_code();
             }
             "admin" => self.open_list(crate::game_lists::ListKind::Admin),
+            "players" => self.open_list(crate::game_lists::ListKind::PlayerList),
             "duty" => self.open_list(crate::game_lists::ListKind::Lines),
             "map" => {
                 self.close_game_menu();
@@ -225,6 +274,7 @@ impl App {
                 self.finish_session();
                 crate::platform::exit(event_loop);
             }
+            "plugin" => self.choose_plugin_line(k),
             // (the rest are the lines of the vehicle and world pages)
             other => {
                 self.page_action(other);
@@ -305,6 +355,14 @@ impl App {
             }
             // (the game's own panels, by name for the plugins and the input script)
             "view_editor" => crate::game_panels::view_editor::open(self),
+            "mirror_hud_edit" => {
+                self.close_game_menu();
+                self.view = "driver".into();
+                if let Some(p) = self.player.as_ref() {
+                    let msg = self.gfx.mirror_hud.start_edit(p);
+                    self.service_msg = Some((msg, 6.0));
+                }
+            }
             "dest_form" => crate::game_panels::open_dest_form(self),
             "quick_menu" => crate::game_panels::quick_menu::toggle(self),
             "driver" => self.open_list(crate::game_lists::ListKind::Drivers),
@@ -387,15 +445,20 @@ pub(crate) fn game_menu_for(args: &crate::Args) -> &'static [(&'static str, &'st
     }
 }
 
+/// A line of the game menu: what it does, its label, and for a plugin's line (`"plugin"`)
+/// whose and which it is, so that a click on it goes to that very line.
+pub(crate) type MenuLine = (&'static str, Cow<'static, str>, Option<omsi_plugin::ui::MenuItem>);
+
 impl crate::App {
     /// The game menu's lines for this session: back to the own bus while walking about,
-    /// the administration for a host and a server's admin. What can be set is behind
-    /// "Options", "Vehicle options" and "World options".
-    pub(crate) fn game_menu_items(&self) -> Vec<(&'static str, &'static str)> {
-        let mut v: Vec<(&'static str, &'static str)> = game_menu_for(&self.args).to_vec();
+    /// the administration for a host and a server's admin, the plugins' lines
+    /// (`ui.set_menu_item`, each a `"plugin"` line). What can be set is behind "Options",
+    /// "Vehicle options" and "World options".
+    pub(crate) fn game_menu_items(&self) -> Vec<MenuLine> {
+        let mut v: Vec<MenuLine> = game_menu_for(&self.args).iter().map(|&(id, label)| (id, Cow::Borrowed(label), None)).collect();
         let mut at = 1;
         if self.session.on_foot.is_some() && self.player.is_some() {
-            v.insert(at, ("tobus", "Back to my bus"));
+            v.insert(at, ("tobus", "Back to my bus".into(), None));
             at += 1;
         }
         // without a bus of one's own: no line to drive
@@ -417,15 +480,39 @@ impl crate::App {
         // the server code: a line to copy it, right under "World options" (only in a LAN session or on a server)
         if self.net.lan.is_some() || on_server(&self.args) {
             if let Some(w) = v.iter().position(|x| x.0 == "world") {
-                v.insert(w + 1, ("copycode", "Copy server code"));
+                v.insert(w + 1, ("copycode", "Copy server code".into(), None));
                 at = at.max(w + 2);
             }
         }
+        // everybody in a multiplayer session may see who is there
+        if self.net.lan.is_some() {
+            let before_quit = v.iter().position(|x| x.0 == "quit").unwrap_or(v.len()).max(at);
+            v.insert(before_quit, ("players", "Player list...".into(), None));
+        }
         if host || self.net.is_admin {
             let before_quit = v.iter().position(|x| x.0 == "quit").unwrap_or(v.len()).max(at);
-            v.insert(before_quit, ("admin", "Administration..."));
+            v.insert(before_quit, ("admin", "Administration...".into(), None));
         }
+        // the plugins' lines, a group of their own before saving (or the way out)
+        let lines = self.plugin_menu_lines();
+        let before = v.iter().position(|x| matches!(x.0, "save" | "admin" | "quit")).unwrap_or(v.len()).max(at);
+        v.splice(before..before, lines.into_iter().map(|m| ("plugin", Cow::Owned(m.label.clone()), Some(m))));
         v
+    }
+
+    /// The plugins' lines of the game menu (`ui.set_menu_item`), in their order there.
+    pub(crate) fn plugin_menu_lines(&self) -> Vec<omsi_plugin::ui::MenuItem> {
+        self.integrations.plugins.as_ref().map(|p| p.ui.borrow().menu_items().to_vec()).unwrap_or_default()
+    }
+
+    /// The player chose the game menu's line `k`, a plugin's: the menu closes, and that
+    /// line's plugin hears `menu_item` with its id in its next frame.
+    fn choose_plugin_line(&mut self, k: usize) {
+        let line = self.game_menu_items().into_iter().nth(k).and_then(|m| m.2);
+        self.close_game_menu();
+        if let (Some(m), Some(p)) = (line, self.integrations.plugins.as_ref()) {
+            p.ui.borrow_mut().pick_menu_item(m.owner, &m.id);
+        }
     }
 
     /// Put the session's server code on the clipboard.
