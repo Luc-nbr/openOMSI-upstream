@@ -569,6 +569,17 @@ impl Settings {
         s
     }
 
+    /// One of the Tobii head-tracking lines of the settings file (`from_text`).
+    fn read_tobii(&mut self, k: &str, v: &str) {
+        match k {
+            "head_tracking_source" => self.head_tracking_source = omsi_launcher_lib::head_tracking_source(v).to_string(),
+            "tobii_edges" => self.tobii_edges = matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"),
+            _ => {
+                let x = omsi_launcher_lib::head_tracking_value(k, v.parse::<f64>().ok()) as f32;
+                if k == "head_tracking_smoothing" { self.head_tracking_smoothing = x } else { self.head_tracking_dead_zone = x }
+            }
+        }
+    }
     /// The settings a `settings.cfg` text describes (anything missing keeps its default).
     pub fn from_text(text: &str) -> Settings {
         let mut s = Settings::default();
@@ -827,12 +838,7 @@ impl Settings {
                 "head_tracking_invert_x" => s.head_tracking_invert_x = b(v),
                 "head_tracking_invert_y" => s.head_tracking_invert_y = b(v),
                 "head_tracking_invert_z" => s.head_tracking_invert_z = b(v),
-                "head_tracking_source" => s.head_tracking_source = omsi_launcher_lib::head_tracking_source(v).to_string(),
-                "tobii_edges" => s.tobii_edges = b(v),
-                "head_tracking_smoothing" | "head_tracking_dead_zone" => {
-                    let x = omsi_launcher_lib::head_tracking_value(&k, v.parse::<f64>().ok()) as f32;
-                    if k == "head_tracking_smoothing" { s.head_tracking_smoothing = x } else { s.head_tracking_dead_zone = x }
-                }
+                "head_tracking_source" | "tobii_edges" | "head_tracking_smoothing" | "head_tracking_dead_zone" => s.read_tobii(&k, v),
                 "discord_status" => s.discord_status = b(v),
                 "discord_app_id" => s.discord_app_id = v.trim().to_string(),
                 "voice_enabled" => s.voice_enabled = b(v),
