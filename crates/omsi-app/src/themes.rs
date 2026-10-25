@@ -355,79 +355,6 @@ pub(crate) fn choices() -> &'static [(String, String)] {
     })
 }
 
-/// The picture behind a glass theme's panels: the game's at about this many pixels across.
-pub(crate) const BACKDROP_W: u32 = 320;
-
-/// The size of the backdrop for a window of `w` x `h`.
-pub(crate) fn backdrop_size(w: u32, h: u32) -> (u32, u32) {
-    let bw = BACKDROP_W.min(w.max(1));
-    (bw, ((h as u64 * bw as u64) / w.max(1) as u64).max(1) as u32)
-}
-
-/// `px` (RGBA, `w` x `h`, both even) at half the size: each pixel the mean of four.
-pub(crate) fn halve(px: &[u8], w: u32, h: u32) -> Vec<u8> {
-    let (hw, hh) = ((w / 2) as usize, (h / 2) as usize);
-    let w = w as usize;
-    let mut out = vec![0u8; hw * hh * 4];
-    if px.len() < w * hh * 2 * 4 {
-        return out;
-    }
-    for y in 0..hh {
-        for x in 0..hw {
-            for c in 0..4 {
-                let at = |dx: usize, dy: usize| px[((2 * y + dy) * w + 2 * x + dx) * 4 + c] as u32;
-                out[(y * hw + x) * 4 + c] = ((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) + 2) / 4) as u8;
-            }
-        }
-    }
-    out
-}
-
-/// `px` (RGBA, `w` x `h`) blurred by `radius` pixels: three box blurs one after the other,
-/// close to a Gaussian's; opaque.
-pub(crate) fn blur(px: &mut [u8], w: usize, h: usize, radius: usize) {
-    if w == 0 || h == 0 || px.len() < w * h * 4 {
-        return;
-    }
-    let r = radius.min(w.max(h));
-    let mut tmp = vec![0u8; w * h * 4];
-    for _ in 0..3 {
-        if r > 0 {
-            box_pass(px, &mut tmp, w, h, r, true);
-            box_pass(&tmp, px, w, h, r, false);
-        }
-    }
-    for p in px.chunks_mut(4) {
-        p[3] = 255;
-    }
-}
-
-/// One box blur along the rows (`across`) or the columns, edges held.
-fn box_pass(src: &[u8], dst: &mut [u8], w: usize, h: usize, r: usize, across: bool) {
-    let (lines, len) = if across { (h, w) } else { (w, h) };
-    let at = |line: usize, i: usize| if across { (line * w + i) * 4 } else { (i * w + line) * 4 };
-    let n = (2 * r + 1) as u32;
-    for line in 0..lines {
-        let mut sum = [0u32; 4];
-        for k in 0..=2 * r {
-            let i = (k as isize - r as isize).clamp(0, len as isize - 1) as usize;
-            for c in 0..4 {
-                sum[c] += src[at(line, i) + c] as u32;
-            }
-        }
-        for i in 0..len {
-            for c in 0..4 {
-                dst[at(line, i) + c] = (sum[c] / n) as u8;
-            }
-            let out = (i as isize - r as isize).clamp(0, len as isize - 1) as usize;
-            let inn = (i + r + 1).min(len - 1);
-            for c in 0..4 {
-                sum[c] = sum[c] + src[at(line, inn) + c] as u32 - src[at(line, out) + c] as u32;
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,22 +451,6 @@ mod tests {
         for own in ["", "openOMSI", "default", "a b", "../x"] {
             assert_eq!(setting(own), "", "{own}");
         }
-    }
-
-    /// The glass's picture: blurred (the edge of a white half softened), opaque, the same
-    /// size; small, whatever the window.
-    #[test]
-    fn the_backdrop_is_blurred_and_small() {
-        assert_eq!(backdrop_size(1920, 1080), (320, 180));
-        assert_eq!(backdrop_size(200, 100), (200, 100));
-        let (w, h) = (40, 10);
-        let mut px: Vec<u8> = (0..w * h).flat_map(|i| if i % w < w / 2 { [255, 255, 255, 200] } else { [0, 0, 0, 200] }).collect();
-        blur(&mut px, w, h, 3);
-        let at = |x: usize| px[(5 * w + x) * 4];
-        assert_eq!((at(0), at(w - 1)), (255, 0));
-        assert!(at(w / 2 - 1) < 230 && at(w / 2) > 25, "{} {}", at(w / 2 - 1), at(w / 2));
-        assert!((1..w).all(|x| at(x) <= at(x - 1)), "it falls evenly");
-        assert!(px.chunks(4).all(|p| p[3] == 255));
     }
 
     /// The options' row for the theme is in the player's language.

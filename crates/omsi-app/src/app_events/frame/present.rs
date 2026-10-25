@@ -3,10 +3,6 @@
 
 use super::*;
 
-/// How often the picture behind a glass theme's pause menu is taken again while the game goes
-/// on behind it (seconds).
-const GLASS_AGAIN: f32 = 1.5;
-
 crate::app::stage_ctx!(
     /// The lighting stage's part of the game.
     LightingCx { reads: [net, world, clock], writes: [weather, player] }
@@ -73,8 +69,6 @@ impl App {
             if self.photo.is_some() {
                 self.photo_render(lighting);
             }
-            // the picture behind a glass theme's pause menu
-            self.frame_glass_backdrop(lighting);
             let (frame, view, shown_nothing) = self.frame_acquire(&mut reconfigure);
             let presented = frame.is_some();
             match view {
@@ -103,44 +97,6 @@ impl App {
         }
         if finish {
             self.finish_session();
-        }
-    }
-
-    /// A glass theme's pause menu: the game's picture behind it, small and blurred, for its
-    /// panels to show through them (`themes::blur`) - taken when the menu opens, and again
-    /// now and then while the game goes on behind it (not paused: a LAN session).
-    fn frame_glass_backdrop(&mut self, lighting: &omsi_render::Lighting) {
-        let glass = omsi_ui::theme::th().glass.filter(|_| self.menus.game_menu.is_some() && self.photo.is_none() && !self.vr_active());
-        let Some(glass) = glass else {
-            if self.shell.has_backdrop() {
-                self.shell.drop_backdrop();
-            }
-            self.menus.glass_taken = None;
-            return;
-        };
-        let stale = self.menus.glass_taken.is_none_or(|t| !self.paused && t.elapsed().as_secs_f32() > GLASS_AGAIN);
-        if self.shell.has_backdrop() && !stale {
-            return;
-        }
-        let (Some(s), Some(r), Some(scene), Some(cam)) = (self.gfx.surface.as_ref(), self.renderer.as_mut(), self.scene.as_mut(), self.camera.as_ref()) else {
-            return;
-        };
-        let (w, h) = (s.config.width, s.config.height);
-        let (bw, bh) = crate::themes::backdrop_size(w, h);
-        // (twice as large, then halved: the small picture's edges smooth)
-        let hud = std::mem::take(&mut scene.overlays);
-        let picture = r.render_to_image(scene, bw * 2, bh * 2, cam, lighting);
-        scene.overlays = hud;
-        self.menus.glass_taken = Some(Instant::now());
-        match picture {
-            Ok(px) => {
-                let mut px = crate::themes::halve(&px, bw * 2, bh * 2);
-                // (the blur's radius in the window's points, in the small picture's pixels)
-                let k = bw as f32 / w.max(1) as f32 * self.shell.scale;
-                crate::themes::blur(&mut px, bw as usize, bh as usize, (glass.blur * k).round() as usize);
-                self.shell.set_backdrop(bw, bh, px);
-            }
-            Err(e) => log::warn!("glass theme: the picture behind the pause menu could not be rendered: {e}"),
         }
     }
 
@@ -392,6 +348,13 @@ impl App {
                 cam,
                 lighting,
             );
+        }
+        // a glass theme's pause menu: the picture under it, as the scene left it, blurred on the
+        // graphics card for its panels (where the window's picture can be copied)
+        if let Some(glass) = omsi_ui::theme::th().glass.filter(|_| self.menus.game_menu.is_some() && !photo && !mirrored) {
+            if let Some(picture) = frame.as_ref().and_then(|f| s.picture(f)) {
+                self.shell.capture_backdrop(r, &picture, glass.blur * self.shell.scale);
+            }
         }
         // the pause menu and the photo mode's panel
         self.shell.render(r, &view, s.config.width, s.config.height);

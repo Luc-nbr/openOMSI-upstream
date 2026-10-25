@@ -23,10 +23,10 @@ use omsi_ui::theme::*;
 use omsi_ui::kit::{id_of, ButtonKind, Ui};
 use crate::ui::{DropdownView, MenuKind, Preview};
 
-/// How much of the background lies over the picture behind the category home pages (the
-/// paused game stays visible), and behind a list or settings window (solid; in a glass theme
-/// over the picture blurred).
-const HOME_VEIL: f32 = 0.72;
+/// The paused game, dimmed, when no category is chosen; a category page, a list or a settings
+/// window has the background solid behind it. In a glass theme the picture is dimmed only a
+/// little behind the rail alone, and blurred under some of the background behind a page.
+const HOME_VEIL: f32 = 0.85;
 const GLASS_HOME_VEIL: f32 = 0.3;
 const GLASS_PAGE_VEIL: f32 = 0.5;
 /// Compact margins for the existing settings and list pages.
@@ -120,19 +120,23 @@ pub(crate) fn draw(sh: &mut Shell, v: &PauseView) {
     let page = Rect::new(left, 0.0, (size.x - left).max(0.0), size.y);
     sh.ui.solid(page);
     let bg = th().bg;
+    let solid = !(sh.pause_hidden && v.list.is_none());
     match (th().glass, sh.ui.backdrop) {
-        (Some(_), Some(tex)) if v.list.is_some() => {
+        (Some(_), Some(tex)) if solid => {
             let all = Rect::new(0.0, 0.0, size.x, size.y);
             sh.ui.image(all, tex, 0.0);
             sh.ui.p().rect(all, bg.alpha(GLASS_PAGE_VEIL));
         }
-        (Some(_), _) => sh.ui.p().rect(page, bg.alpha(if v.list.is_some() { GLASS_PAGE_VEIL.max(HOME_VEIL) } else { GLASS_HOME_VEIL })),
-        (None, _) => sh.ui.p().rect(page, if v.list.is_some() { bg } else { bg.alpha(HOME_VEIL) }),
+        // (the blurred picture not there yet: as good as solid)
+        (Some(_), _) => sh.ui.p().rect(page, bg.alpha(if solid { HOME_VEIL } else { GLASS_HOME_VEIL })),
+        (None, _) => sh.ui.p().rect(page, if solid { bg } else { bg.alpha(HOME_VEIL) }),
     }
     if let Some(list) = v.list.as_ref() {
         list_page(sh, v, list, page);
     } else {
-        navigation_ui::page(sh, v, page, !sidebar);
+        if !sh.pause_hidden {
+            navigation_ui::page(sh, v, page, !sidebar);
+        }
     }
     if sidebar {
         navigation_ui::rail(sh, v);

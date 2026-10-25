@@ -303,8 +303,13 @@ impl VehicleInstance {
             rail_scripted: false,
             rail_out: None,
             rail_log: 0.0,
+            rail_brake_sys: None,
+            rail_chain: None,
+            rail_broken: false,
+            panto: None,
         };
         instance.declare_trolley_vars();
+        instance.init_pantograph();
         instance
     }
 

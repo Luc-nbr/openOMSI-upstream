@@ -98,10 +98,11 @@ after the loading reached it:
 
 With `glass`, the pause menu's rail, its cards and panels, and the settings windows are panes
 of frosted glass: the game's picture behind them blurred, the panel's colour over it at the
-glass's opacity, a light edge and a sheen at the top. The picture is taken (small, blurred on
-the processor) when the menu opens, and again every second and a half while the game goes on
-behind it (a LAN session, which does not pause). In a headset the menu takes the theme's colours
-but no glass.
+glass's opacity, a light edge and a sheen at the top. The picture is the frame the game has just
+drawn, copied and blurred on the graphics card every frame the menu is open (nothing is read
+back, nothing waits for the graphics card), so it moves where the game goes on behind the menu
+(a LAN session, which does not pause). Where the window's picture cannot be copied, the panels
+are see-through without the blur. In a headset the menu takes the theme's colours but no glass.
 
 ## For plugins
 

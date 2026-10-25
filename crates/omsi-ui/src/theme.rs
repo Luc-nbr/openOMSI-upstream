@@ -193,6 +193,13 @@ pub fn th() -> Palette {
     LOCAL.with(|l| l.get()).unwrap_or_else(|| *PALETTE.read().unwrap_or_else(|e| e.into_inner()))
 }
 
+/// A corner of `r` as openOMSI draws it, moved by as much as the palette's `radius` differs from
+/// openOMSI's: a theme's rounder (or squarer) corners for every surface, the openOMSI look's own
+/// unchanged.
+pub fn corner(r: f32) -> f32 {
+    (r + th().radius - Palette::OPENOMSI.radius).max(0.0)
+}
+
 /// Puts `p` in force for every screen drawn after.
 pub fn set(p: Palette) {
     *PALETTE.write().unwrap_or_else(|e| e.into_inner()) = p;

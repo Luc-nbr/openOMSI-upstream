@@ -244,6 +244,13 @@ pub(crate) fn spawn_player_prepared(
         world.accept_placement_prefetch(staged);
     }
     let vt = prepared.ty;
+    if let omsi_cfg::transport::Admission::Refused(why) = omsi_sim::transport::admission(world.global.transport, &vt.def) {
+        if omsi_cfg::flags::OMSI_IGNORE_TRANSPORT.is_set() {
+            log::warn!("transport: {why} (OMSI_IGNORE_TRANSPORT is set, running anyway)");
+        } else {
+            anyhow::bail!("{} {} cannot run on this map. {why}", vt.def.manufacturer, vt.def.type_name);
+        }
+    }
     log::info!(
         "vehicle {} {}: {} meshes, {} script blocks, {} variables",
         vt.def.manufacturer,
@@ -656,10 +663,14 @@ fn new_player(vehicle: omsi_sim::VehicleInstance, render: scene::VehicleRender, 
         blinker_key_state: 0,
         blinker_cancel: crate::settings::Settings::load().blinker_cancel,
         trolley_view: None,
+        panto_fx: Default::default(),
         trolley_sound: Default::default(),
         announce: crate::auto_announce::AutoAnnounce::new(),
     }
 }
+
+#[cfg(test)]
+mod cabin_input_tests;
 
 /// `OMSI_DEBUG_MESHES`: every mesh of the vehicle with its bounds, and per material slot (of the
 /// meshes whose file the flag names) which part of its texture it shows.

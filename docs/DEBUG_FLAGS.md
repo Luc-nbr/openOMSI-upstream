@@ -232,6 +232,7 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_SPOT_SELECT` | num | - | use | scene | Turn on spotlight n (headlight pictures). |
 | `OMSI_TEST_AVATAR` | text | - | test | sim | Test only: an avatar FBX for the avatar loading test (`cargo test -p omsi-sim a_rocketbox_avatar_loads -- --ignored`). |
 | `OMSI_TEST_CONTENT` | text | - | test | o3d, scene | Content root for tests that need real OMSI content. |
+| `OMSI_TEST_LEGACY_TROLLEY_DRIVE` | bool | off | test | sim | Test only: set by the trolley test on the child process it starts to run itself with the realistic physics on. |
 | `OMSI_TEST_PACKAGE_MAP` | text | - | test | launcher-model | Test only: the global.cfg of a map that carries a package, for the launcher route map test (`cargo test -p omsi-launcher-model the_package_of_a_real_map_is_exported -- --ignored`). |
 | `OMSI_TEST_WINE_DIR` | text | - | test | plugin | Plugin demo test: folder holding omsi-plugin-host.exe for Wine. |
 | `OMSI_TOBII_RAW` | text | - | test | input | Tests: a file for the Tobii tracker's raw poses (record_the_tracker_here). |
@@ -265,8 +266,10 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_GPU_ARRAYS` | text | - | use | render | textures, nostorage or lighttextures: take that texture array path on any device. |
 | `OMSI_GUARD_DEADLINE` | num | 120 | use | guard | The start guard: seconds the launcher may take to its first frames before its start counts as hung (it is then ended and the guard heals the installation). |
 | `OMSI_HEIGHTPROFILE_GROUND` | bool | off | once | scene | The wheels stand on the splines' [heightprofile]s again (A/B). |
-| `OMSI_HTML_FALLBACK_FONT` | text | - | use | htmlengine | Font file for the html pages' characters Inter lacks (Hangul, CJK); else Malgun Gothic (Windows) or AppleGothic (macOS). |
-| `OMSI_HTML_FALLBACK_FONT_BOLD` | text | - | use | htmlengine | With OMSI_HTML_FALLBACK_FONT: its bold face. |
+| `OMSI_HTML_ENGINE` | text | classic | use | htmlpage | `modern` runs every [htmltexture] page on the modern engine (flexbox, modern JavaScript) instead of only those that ask with <meta name="omsi-engine" content="modern">; for comparing the two. |
+| `OMSI_HTML_FALLBACK_FONT` | text | - | use | htmlengine, htmlpage | Font file for the html pages' characters Inter lacks (Hangul, CJK); else Malgun Gothic (Windows) or AppleGothic (macOS). |
+| `OMSI_HTML_FALLBACK_FONT_BOLD` | text | - | use | htmlengine, htmlpage | With OMSI_HTML_FALLBACK_FONT: its bold face. |
+| `OMSI_IGNORE_TRANSPORT` | bool | off | use | app | Run a vehicle on a map built for other transport modes (the log still says so). |
 | `OMSI_INTEL_FULL_GPU` | bool | off | use | render | Keep the requested settings on an Intel Vulkan adapter. |
 | `OMSI_KEEP_ALLOCATOR` | bool | off | use | app | Skip the restart that swaps in the faster allocator at start. |
 | `OMSI_LAMP_SHADOWS_EVERY_FRAME` | bool | off | frame | render | Redraw the street lamps' shadow tiles every frame (not only when they change). |
@@ -296,6 +299,7 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_NO_GLARE` | bool | off | frame | render | No sun glare. |
 | `OMSI_NO_GLASS_PICTURE` | bool | off | frame | render | No picture behind the glass (rain films). |
 | `OMSI_NO_GROUND_PAINT` | bool | off | use | scene | No painted ground layers. |
+| `OMSI_NO_GROUND_PASS` | bool | off | frame | render | The terrain's paint layers lit one by one again, not laid into one albedo picture first (A/B). |
 | `OMSI_NO_GROUND_SPLINE_BATCHING` | bool | off | use | scene | No batching of ground splines. |
 | `OMSI_NO_GUARD` | bool | off | use | guard, launcher-api | No start guard: a start that crashes or hangs is not healed by an update or by going back to the version before. |
 | `OMSI_NO_HARDWARE_ID` | bool | off | once | lan | LAN: the game sends no hardware identifier (a host can then turn the player away, and cannot ban the machine). |

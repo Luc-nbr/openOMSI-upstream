@@ -53,6 +53,8 @@ pub(crate) struct Shell {
     pub(crate) ui: Ui,
     pub(crate) pause_category: pause::navigation::Category,
     pub(crate) quick_edit: bool,
+    /// No category chosen: the pause menu shows only the rail over the dimmed paused game.
+    pub(crate) pause_hidden: bool,
     pub(crate) quick_focus: usize,
     gpu: Option<(Gpu, wgpu::TextureFormat)>,
     shot_gpu: Option<Gpu>,
@@ -72,12 +74,8 @@ pub(crate) struct Shell {
     /// beside it (none: "openOMSI").
     logo_of: Option<String>,
     pub(crate) logo_title: Option<String>,
-    /// The game's picture blurred, for a glass theme's panels (`themes::blur`): sent to the
-    /// graphics card with the next frame; its texture there, kept for the next time; and
-    /// whether it is shown now.
-    backdrop: Option<(u32, u32, Vec<u8>)>,
-    backdrop_tex: Option<usize>,
-    backdrop_on: bool,
+    /// A glass theme's picture behind the screens (`capture_backdrop`).
+    glass: Option<GlassPicture>,
     /// Physical pixels per point of the last frame.
     pub(crate) scale: f32,
     /// The mouse was over a panel of the screens in the last frame.
@@ -96,12 +94,25 @@ struct Drawn {
     ranges: Vec<(Range<u32>, usize)>,
 }
 
+/// A glass theme's picture behind the screens: the window's picture copied on the graphics card
+/// and blurred there in three small passes, never read back (`Shell::capture_backdrop`).
+struct GlassPicture {
+    /// The copy, and its number among the screens' textures.
+    copy: (wgpu::Texture, usize),
+    /// Each pass's picture and its number: a quarter of the size, `factor`th, twice that.
+    passes: Vec<(wgpu::Texture, usize)>,
+    factor: u32,
+}
+
+/// The vertex buffer of the glass's passes (0 is the screens').
+const GLASS_BUFFER: usize = 1;
+
 impl Shell {
     pub(crate) fn new() -> Shell {
         // (the desktop launcher's calm look: graphite surfaces, no edges)
         let mut ui = Ui::new();
         ui.flat = true;
-        Shell { process_prompt: None, process_dialog: Default::default(), ui, pause_category: Default::default(), quick_edit: false, quick_focus: 0, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, logo_of: None, logo_title: None, backdrop: None, backdrop_tex: None, backdrop_on: false, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
+        Shell { process_prompt: None, process_dialog: Default::default(), ui, pause_category: Default::default(), quick_edit: false, pause_hidden: true, quick_focus: 0, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, logo_of: None, logo_title: None, glass: None, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
     }
 
     /// A frame of the screens begins: the window's size in physical pixels and how many of
@@ -116,7 +127,7 @@ impl Shell {
         self.scale = next_scale;
         self.ui.input.touch = crate::platform::touch_controls();
         self.ui.begin(Vec2::new(width / self.scale, height / self.scale), self.scale, dt);
-        self.ui.backdrop = self.backdrop_tex.filter(|_| self.backdrop_on);
+        self.ui.backdrop = self.glass.as_ref().and_then(|g| g.passes.last()).map(|p| p.1);
         self.logo_title = crate::themes::current().and_then(|t| t.title.clone());
     }
 
@@ -143,23 +154,6 @@ impl Shell {
     /// The photo to show under the screens (RGBA, sRGB), sent with the next frame.
     pub(crate) fn set_picture(&mut self, w: u32, h: u32, rgba: Vec<u8>) {
         self.picture = Some((w, h, rgba));
-    }
-
-    /// The game's picture blurred (RGBA, sRGB), for a glass theme's panels from the next frame.
-    pub(crate) fn set_backdrop(&mut self, w: u32, h: u32, rgba: Vec<u8>) {
-        self.backdrop = Some((w, h, rgba));
-        self.backdrop_on = true;
-    }
-
-    /// The blurred picture is no longer shown (until the next `set_backdrop`).
-    pub(crate) fn drop_backdrop(&mut self) {
-        self.backdrop = None;
-        self.backdrop_on = false;
-    }
-
-    /// A blurred picture is shown, or on its way to the card.
-    pub(crate) fn has_backdrop(&self) -> bool {
-        self.backdrop_on
     }
 
     /// The photo is no longer shown.
@@ -201,19 +195,89 @@ impl Shell {
         gpu.upload_atlas(&r.queue, &mut ui.atlas);
     }
 
-    /// The screens over the window's picture (`view`, `w` x `h` pixels).
-    pub(crate) fn render(&mut self, r: &Renderer, view: &wgpu::TextureView, w: u32, h: u32) {
-        let Some(d) = self.drawn.as_ref() else { return };
+    /// The screens' graphics, made for the renderer's format (anew when it changed: the
+    /// textures on the old ones are made again).
+    fn ensure_gpu(&mut self, r: &Renderer) {
         let format = r.format();
         if self.gpu.as_ref().map(|g| g.1 != format).unwrap_or(true) {
             self.gpu = Some((Gpu::new(&r.device, format, 1, self.ui.atlas.size), format));
             self.ui.atlas.mark_all_dirty();
             self.picture_tex = None;
             self.logo_tex = None;
-            // (the blurred picture went with the old card: the game makes it again)
-            self.backdrop_tex = None;
-            self.backdrop_on = self.backdrop.is_some();
+            self.glass = None;
         }
+    }
+
+    /// A glass theme's picture behind the screens, from the window's picture `src` as the
+    /// scene left it (before the screens are drawn over it): copied on the graphics card and
+    /// blurred there by about `blur` pixels - down to a quarter, then to a `factor`th, then up
+    /// to twice that, each pass four taps a texel of the picture before apart, averaged (a box
+    /// of four at each step). Nothing is read back and nothing waits for the graphics card: a
+    /// copy and three passes into pictures of a sixteenth of the window and less.
+    pub(crate) fn capture_backdrop(&mut self, r: &Renderer, src: &wgpu::Texture, blur: f32) {
+        self.ensure_gpu(r);
+        let Some((gpu, format)) = self.gpu.as_mut() else { return };
+        let format = *format;
+        let size = wgpu::Extent3d { depth_or_array_layers: 1, ..src.size() };
+        let (w, h) = (size.width.max(1), size.height.max(1));
+        let factor = ((blur * 0.5).round().max(1.0) as u32).next_power_of_two().clamp(8, 32);
+        let stale = self.glass.as_ref().is_none_or(|g| g.copy.0.size() != size || g.copy.0.format() != src.format() || g.factor != factor);
+        if stale {
+            if let Some(old) = self.glass.take() {
+                gpu.free(old.copy.1);
+                for p in old.passes {
+                    gpu.free(p.1);
+                }
+            }
+            let make = |label: &str, (tw, th): (u32, u32), format: wgpu::TextureFormat, usage: wgpu::TextureUsages| {
+                r.device.create_texture(&wgpu::TextureDescriptor { label: Some(label), size: wgpu::Extent3d { width: tw.max(1), height: th.max(1), depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[] })
+            };
+            let copy = make("glass: the picture", (w, h), src.format(), wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING);
+            let copy_id = gpu.add_view(&r.device, &copy.create_view(&Default::default()), (w, h));
+            let passes = [4, factor, factor / 2]
+                .into_iter()
+                .map(|k| {
+                    let s = ((w / k).max(1), (h / k).max(1));
+                    let t = make("glass: a pass", s, format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
+                    let id = gpu.add_view(&r.device, &t.create_view(&Default::default()), s);
+                    (t, id)
+                })
+                .collect();
+            self.glass = Some(GlassPicture { copy: (copy, copy_id), passes, factor });
+        }
+        let Some(g) = self.glass.as_ref() else { return };
+        let mut enc = r.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("glass: copy") });
+        enc.copy_texture_to_texture(src.as_image_copy(), g.copy.0.as_image_copy(), size);
+        r.queue.submit([enc.finish()]);
+        let mut from = (g.copy.1, w, h);
+        // (a texel apart going down, half a texel coming up)
+        for ((t, id), apart) in g.passes.iter().zip([1.0f32, 1.0, 0.5]) {
+            let (pw, ph) = (t.width(), t.height());
+            let mut p = omsi_ui::Painter::new();
+            let (du, dv) = (apart / from.1 as f32, apart / from.2 as f32);
+            // (each tap over the ones before at 1/n of its weight: their mean)
+            for (n, (ox, oy)) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)].into_iter().enumerate() {
+                let s = omsi_ui::Sprite { uv: [ox * du, oy * dv, 1.0 + ox * du, 1.0 + oy * dv], w: pw as f32, h: ph as f32, ascent: 0.0 };
+                p.sprite(s, Vec2::ZERO, Vec2::new(pw as f32, ph as f32), omsi_ui::Color([1.0, 1.0, 1.0, 1.0 / (n as f32 + 1.0)]));
+            }
+            // (one pass a submission: the layers' uniforms and the vertices are written for it)
+            gpu.upload(&r.device, &r.queue, GLASS_BUFFER, &p.verts);
+            let layer = Layer::flat([0.0, 0.0, pw as f32, ph as f32], 0.0, 1.0);
+            let view = t.create_view(&Default::default());
+            let mut enc = r.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("glass: a pass") });
+            gpu.render(&r.device, &r.queue, &mut enc, &view, (pw, ph), Some(wgpu::Color::TRANSPARENT), &[layer], &[Draw { buffer: GLASS_BUFFER, range: 0..p.len(), layer: 0, texture: from.0 }]);
+            r.queue.submit([enc.finish()]);
+            from = (*id, pw, ph);
+        }
+    }
+
+    /// The screens over the window's picture (`view`, `w` x `h` pixels).
+    pub(crate) fn render(&mut self, r: &Renderer, view: &wgpu::TextureView, w: u32, h: u32) {
+        if self.drawn.is_none() {
+            return;
+        }
+        self.ensure_gpu(r);
+        let Some(d) = self.drawn.as_ref() else { return };
         let Some((gpu, _)) = self.gpu.as_mut() else { return };
         // the logo: the interface theme's, when it has one
         let theme = crate::themes::current().filter(|t| t.logo.is_some());
@@ -230,12 +294,6 @@ impl Shell {
                 None => logo_pixels(),
             };
             self.logo_tex = px.map(|px| gpu.add_image(&r.device, &r.queue, LOGO_PX, LOGO_PX, &px));
-        }
-        if let Some((bw, bh, px)) = self.backdrop.take() {
-            match self.backdrop_tex {
-                Some(id) => gpu.update_image(&r.device, &r.queue, id, bw, bh, &px),
-                None => self.backdrop_tex = Some(gpu.add_image(&r.device, &r.queue, bw, bh, &px)),
-            }
         }
         if let Some((pw, ph, px)) = self.picture.take() {
             match self.picture_tex {

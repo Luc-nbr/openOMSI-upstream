@@ -29,16 +29,16 @@ fn session_action(sh: &mut Shell, v: &PauseView, id: &str, rect: Rect, kind: But
     let fill = if primary { th().accent.mix(th().accent_hover, t) } else { th().surface_2.mix(th().danger_2.alpha(0.15), t) };
     let ink = if primary { th().accent_ink } else { th().danger_2 };
     if primary {
-        ui.p().rounded(rect, th().radius, fill);
+        ui.p().rounded(rect, corner(12.0), fill);
     } else {
-        ui.surface(rect, th().radius, fill);
+        ui.surface(rect, corner(12.0), fill);
     }
     let width = ui.width(&label, 18.0, Weight::Bold);
     let x = rect.center().x - (width + 32.0) * 0.5;
     ui.icon(rail_icon(id), Vec2::new(x + 12.0, rect.center().y), 24.0, ink);
     ui.text_in(&label, Rect::new(x + 32.0, rect.y, width + 2.0, rect.h), 18.0, Weight::Bold, ink, Align::Left);
     if v.kbd && !sh.quick_edit && v.list.is_none() && v.rail_sel == Some(k) {
-        ui.p().rounded_border(rect.inset(-2.0), 9.0, 2.0, th().accent);
+        ui.p().rounded_border(rect.inset(-2.0), corner(14.0), 2.0, th().accent);
     }
     if clicked {
         activate(sh, v, k);
@@ -52,7 +52,7 @@ pub(super) fn rail(sh: &mut Shell, v: &PauseView) {
     ui.solid(r);
     if th().glass.is_some() {
         // (a glass theme: the rail a pane of its own over the picture)
-        ui.surface(Rect::new(8.0, 8.0, RAIL_W - 14.0, (size.y - 16.0).max(0.0)), th().radius + 6.0, th().sidebar);
+        ui.surface(Rect::new(8.0, 8.0, RAIL_W - 14.0, (size.y - 16.0).max(0.0)), corner(14.0), th().sidebar);
     } else {
         ui.p().rect(r, th().sidebar);
     }
@@ -78,10 +78,11 @@ pub(super) fn rail(sh: &mut Shell, v: &PauseView) {
     let categories = Category::available(&ids(v));
     let mut picked = None;
     let selected = sh.pause_category;
+    let hidden = sh.pause_hidden;
     sh.ui.scroll_area("pause-categories", area, &mut |ui, view| {
         for (i, category) in categories.iter().copied().enumerate() {
             let rect = Rect::new(view.x, view.y + i as f32 * 60.0, view.w, 52.0);
-            if category_button(ui, category, selected == category, rect) {
+            if category_button(ui, category, selected == category && !hidden, rect) {
                 picked = Some(category);
             }
         }
@@ -104,7 +105,7 @@ pub(super) fn rail(sh: &mut Shell, v: &PauseView) {
 fn driver(sh: &mut Shell, v: &PauseView, height: f32) {
     let ui = &mut sh.ui;
     let chip = Rect::new(16.0, height - 66.0, RAIL_W - 32.0, 52.0);
-    ui.surface(chip, th().radius, th().surface);
+    ui.surface(chip, corner(8.0), th().surface);
     let av = Vec2::new(chip.x + 24.0, chip.center().y);
     ui.p().circle(av, 16.0, th().surface_3);
     let initial = v.summary.driver.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
@@ -116,7 +117,7 @@ fn driver(sh: &mut Shell, v: &PauseView, height: f32) {
 fn category_button(ui: &mut Ui, category: Category, selected: bool, rect: Rect) -> bool {
     let (hovered, _, clicked) = ui.interact(id_of(&format!("pause-category-{category:?}")), rect);
     let t = ui.anim(id_of(&format!("pause-category-hover-{category:?}")), if hovered { 1.0 } else { 0.0 }, 0.08);
-    ui.p().rounded(rect, 7.0, if selected { th().accent.alpha(0.10) } else { th().surface_2.alpha(t) });
+    ui.p().rounded(rect, corner(10.0), if selected { th().accent.alpha(0.10) } else { th().surface_2.alpha(t) });
     let color = if selected { th().accent } else { th().ink_2.mix(th().ink, t) };
     ui.icon(category.icon(), Vec2::new(rect.x + 23.0, rect.center().y), 22.0, color);
     ui.text_in(&omsi_ui::tr(category.title()), Rect::new(rect.x + 48.0, rect.y, (rect.w - 71.0).max(0.0), rect.h), 17.0, Weight::Medium, color, Align::Left);
@@ -131,9 +132,9 @@ pub(super) fn page(sh: &mut Shell, v: &PauseView, page: Rect, compact: bool) {
     }
     let category = sh.pause_category;
     if category != Category::Home { sh.quick_edit = false; }
-    let pad = if page.w < 420.0 { 18.0 } else { 36.0 };
-    let width = (page.w - pad * 2.0).clamp(0.0, 980.0);
-    let x = page.x + (page.w - width) * 0.5;
+    let pad = if page.w < 420.0 { 18.0 } else { 32.0 };
+    let width = (page.w - pad * 2.0).clamp(0.0, 1400.0);
+    let x = page.x + pad;
     let tight = compact && page.h < 420.0;
     if !tight {
         let header = Rect::new(x, 28.0, width, 22.0);
@@ -141,7 +142,7 @@ pub(super) fn page(sh: &mut Shell, v: &PauseView, page: Rect, compact: bool) {
         sh.ui.text_in(&omsi_ui::tr(if v.paused { "Paused" } else { "Menu" }), header, 11.0, Weight::Medium, th().accent, Align::Right);
     }
     let short = compact && page.h < 640.0;
-    let mut top = 86.0;
+    let mut top = if compact { 86.0 } else { 52.0 };
     if compact {
         session_action(sh, v, "resume", Rect::new(x, if tight { 16.0 } else { 66.0 }, width, 46.0), ButtonKind::Primary);
         top = if tight {
@@ -284,9 +285,9 @@ fn action_card(ui: &mut Ui, v: &PauseView, index: usize, rect: Rect, keyboard: b
     let (hovered, _, clicked) = ui.interact(id_of(&format!("pause-card-{index}-{id}")), rect);
     let t = ui.anim(id_of(&format!("pause-card-hover-{index}-{id}")), if hovered && !disabled { 1.0 } else { 0.0 }, 0.08);
     let fill = if keyboard { th().surface.mix(th().accent, 0.12) } else { th().surface.mix(th().surface_2, t) };
-    ui.surface(rect, th().radius + 2.0, fill);
+    ui.surface(rect, corner(18.0), fill);
     if keyboard {
-        ui.p().rounded_border(rect.inset(1.0), 9.0, 2.0, th().accent);
+        ui.p().rounded_border(rect, corner(18.0), 2.0, th().accent);
     }
     let danger = *id == "endduty";
     let ink = if disabled {
@@ -298,7 +299,7 @@ fn action_card(ui: &mut Ui, v: &PauseView, index: usize, rect: Rect, keyboard: b
     };
     let icon_c = if shortcut { th().accent } else { th().ink_2 };
     let tile = Rect::new(rect.x + 18.0, rect.y + 37.0, 46.0, 46.0);
-    ui.p().rounded(tile, 8.0, if shortcut { th().accent.alpha(0.10) } else { th().surface_2 });
+    ui.p().rounded(tile, corner(14.0), if shortcut { th().accent.alpha(0.10) } else { th().surface_2 });
     let icon = plugin
         .as_ref()
         .and_then(|p| p.icon.as_deref())

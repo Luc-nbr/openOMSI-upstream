@@ -21,7 +21,7 @@ pub(super) fn editor(sh: &mut Shell, v: &PauseView, area: Rect) {
     let keyboard = v.kbd && !sh.ui.hover(area);
     let row_h = 62.0;
     let scroll_rect = Rect::new(area.x, area.y, area.w, (area.h - 54.0).max(0.0));
-    sh.ui.surface(area, th().radius + 2.0, th().surface);
+    sh.ui.surface(area, corner(10.0), th().surface);
     sh.ui.scroll_area("pause-quick-editor", scroll_rect, &mut |ui, view| {
         for (i, id) in entries.iter().enumerate() {
             let rect = Rect::new(view.x + 8.0, view.y + i as f32 * row_h + 4.0, (view.w - 16.0).max(0.0), row_h - 8.0);
