@@ -100,6 +100,7 @@ mod photo;
 mod depot_bus;
 mod devtools;
 mod telemetry;
+mod themes;
 use omsi_scene::threads;
 use omsi_scene::tiles;
 mod traffic;
@@ -713,6 +714,7 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
             hover_part: None,
             hover_hand: false,
             game_menu: None,
+            glass_taken: None,
             menu_top: None,
             menu_scroll_drag: false,
             dd_scroll_drag: None,

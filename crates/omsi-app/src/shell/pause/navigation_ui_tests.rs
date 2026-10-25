@@ -169,7 +169,7 @@ fn pause_navigation_flat_cards_keep_keyboard_focus_visible() {
         sh.begin(1440.0, 900.0, 1.0, 1.0 / 60.0);
         assert!(sh.ui.flat);
         action_card(&mut sh.ui, &v, 2, Rect::new(350.0, 184.0, 480.0, 120.0), selected, false);
-        counts.push(sh.ui.p().verts.iter().filter(|vertex| vertex.color == ACCENT.0).count());
+        counts.push(sh.ui.p().verts.iter().filter(|vertex| vertex.color == th().accent.0).count());
     }
     assert_eq!(counts[0], 0);
     assert!(counts[1] > 0, "Keyboard focus must survive the flat theme");
@@ -184,7 +184,7 @@ fn pause_navigation_quit_keeps_keyboard_focus_visible() {
     let mut sh = Shell::new();
     sh.begin(1440.0, 900.0, 1.0, 1.0 / 60.0);
     session_action(&mut sh, &v, "quit", Rect::new(16.0, 768.0, 204.0, 54.0), ButtonKind::Danger);
-    assert!(sh.ui.p().verts.iter().any(|vertex| vertex.color == ACCENT.0));
+    assert!(sh.ui.p().verts.iter().any(|vertex| vertex.color == th().accent.0));
 }
 
 #[test]

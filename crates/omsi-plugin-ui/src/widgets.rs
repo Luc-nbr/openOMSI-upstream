@@ -1,7 +1,7 @@
 //! The panels' controls and pictures (`omsi.ui` version 2): checkboxes, sliders, text
 //! fields, tabs, charts, tables and images - their sizes and what they are drawn from.
 
-use super::{color, ink_on, Hit, HitKind, Item, Layout, ACCENT, BUTTON, DIVIDER, INK, LINE, TRACK};
+use super::{color, ink_on, Hit, HitKind, Item, Layout, accent, BUTTON, DIVIDER, INK, LINE, TRACK};
 use glam::Vec2;
 use hashbrown::HashMap;
 use omsi_plugin::ui::{Align, ChartStyle, Element, Kind, Rgba};
@@ -60,7 +60,7 @@ impl Layout<'_> {
     }
 
     pub fn widget_emit(&mut self, e: &Element, r: Rect) {
-        let accent = e.color.map(color).unwrap_or(ACCENT);
+        let accent = e.color.map(color).unwrap_or_else(accent);
         match &e.kind {
             Kind::Image { path, width, height } => {
                 let k = (r.w / width).min(1.0);

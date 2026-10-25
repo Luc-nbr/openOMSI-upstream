@@ -26,15 +26,19 @@ fn session_action(sh: &mut Shell, v: &PauseView, id: &str, rect: Rect, kind: But
     let (hovered, _, clicked) = ui.interact(id_of(&format!("pause-session-{id}")), rect);
     let t = ui.anim(id_of(&format!("pause-session-hover-{id}")), if hovered { 1.0 } else { 0.0 }, 0.08);
     let primary = kind == ButtonKind::Primary;
-    let fill = if primary { ACCENT.mix(ACCENT_HOVER, t) } else { SURFACE_2.mix(DANGER_2.alpha(0.15), t) };
-    let ink = if primary { ACCENT_INK } else { DANGER_2 };
-    ui.p().rounded(rect, 8.0, fill);
+    let fill = if primary { th().accent.mix(th().accent_hover, t) } else { th().surface_2.mix(th().danger_2.alpha(0.15), t) };
+    let ink = if primary { th().accent_ink } else { th().danger_2 };
+    if primary {
+        ui.p().rounded(rect, th().radius, fill);
+    } else {
+        ui.surface(rect, th().radius, fill);
+    }
     let width = ui.width(&label, 18.0, Weight::Bold);
     let x = rect.center().x - (width + 32.0) * 0.5;
     ui.icon(rail_icon(id), Vec2::new(x + 12.0, rect.center().y), 24.0, ink);
     ui.text_in(&label, Rect::new(x + 32.0, rect.y, width + 2.0, rect.h), 18.0, Weight::Bold, ink, Align::Left);
     if v.kbd && !sh.quick_edit && v.list.is_none() && v.rail_sel == Some(k) {
-        ui.p().rounded_border(rect.inset(-2.0), 9.0, 2.0, ACCENT);
+        ui.p().rounded_border(rect.inset(-2.0), 9.0, 2.0, th().accent);
     }
     if clicked {
         activate(sh, v, k);
@@ -46,14 +50,28 @@ pub(super) fn rail(sh: &mut Shell, v: &PauseView) {
     let r = Rect::new(0.0, 0.0, RAIL_W, size.y);
     let ui = &mut sh.ui;
     ui.solid(r);
-    ui.p().rect(r, SIDEBAR);
+    if th().glass.is_some() {
+        // (a glass theme: the rail a pane of its own over the picture)
+        ui.surface(Rect::new(8.0, 8.0, RAIL_W - 14.0, (size.y - 16.0).max(0.0)), th().radius + 6.0, th().sidebar);
+    } else {
+        ui.p().rect(r, th().sidebar);
+    }
     if let Some(tex) = sh.logo_tex {
         ui.image(Rect::new(18.0, 18.0, 32.0, 32.0), tex, 7.0);
     }
-    ui.text("openOMSI", Vec2::new(60.0, 32.0), 18.0, Weight::Bold, INK, Align::Left);
-    ui.text_in(crate::startup::VERSION, Rect::new(60.0, 38.0, RAIL_W - 72.0, 18.0), 11.0, Weight::Regular, INK_MUTED, Align::Left);
+    // the game's name and version; a theme's name over openOMSI's version
+    match sh.logo_title.as_deref() {
+        Some(title) => {
+            ui.text_in(title, Rect::new(60.0, 17.0, RAIL_W - 72.0, 22.0), 18.0, Weight::Bold, th().ink, Align::Left);
+            ui.text_in(&format!("openOMSI {}", crate::startup::VERSION), Rect::new(60.0, 38.0, RAIL_W - 72.0, 18.0), 11.0, Weight::Regular, th().ink_muted, Align::Left);
+        }
+        None => {
+            ui.text("openOMSI", Vec2::new(60.0, 32.0), 18.0, Weight::Bold, th().ink, Align::Left);
+            ui.text_in(crate::startup::VERSION, Rect::new(60.0, 38.0, RAIL_W - 72.0, 18.0), 11.0, Weight::Regular, th().ink_muted, Align::Left);
+        }
+    }
     session_action(sh, v, "resume", Rect::new(16.0, 78.0, RAIL_W - 32.0, 54.0), ButtonKind::Primary);
-    sh.ui.text_in(&omsi_ui::tr("Pause menu"), Rect::new(26.0, 144.0, RAIL_W - 42.0, 20.0), 11.0, Weight::Medium, INK_MUTED, Align::Left);
+    sh.ui.text_in(&omsi_ui::tr("Pause menu"), Rect::new(26.0, 144.0, RAIL_W - 42.0, 20.0), 11.0, Weight::Medium, th().ink_muted, Align::Left);
     let show_driver = size.y >= 440.0;
     let foot = if show_driver { 138.0 } else { 76.0 };
     let area = Rect::new(12.0, 176.0, RAIL_W - 24.0, (size.y - 176.0 - foot).max(0.0));
@@ -86,20 +104,20 @@ pub(super) fn rail(sh: &mut Shell, v: &PauseView) {
 fn driver(sh: &mut Shell, v: &PauseView, height: f32) {
     let ui = &mut sh.ui;
     let chip = Rect::new(16.0, height - 66.0, RAIL_W - 32.0, 52.0);
-    ui.p().rounded(chip, 8.0, SURFACE);
+    ui.surface(chip, th().radius, th().surface);
     let av = Vec2::new(chip.x + 24.0, chip.center().y);
-    ui.p().circle(av, 16.0, SURFACE_3);
+    ui.p().circle(av, 16.0, th().surface_3);
     let initial = v.summary.driver.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
-    ui.text_in(&initial, Rect::new(av.x - 16.0, av.y - 16.0, 32.0, 32.0), 13.0, Weight::Bold, INK_2, Align::Center);
-    ui.text_in(&v.summary.driver, Rect::new(chip.x + 50.0, chip.y + 7.0, chip.w - 58.0, 19.0), 13.0, Weight::Bold, INK, Align::Left);
-    ui.text_in(&v.summary.bus, Rect::new(chip.x + 50.0, chip.y + 27.0, chip.w - 58.0, 17.0), 11.0, Weight::Regular, INK_MUTED, Align::Left);
+    ui.text_in(&initial, Rect::new(av.x - 16.0, av.y - 16.0, 32.0, 32.0), 13.0, Weight::Bold, th().ink_2, Align::Center);
+    ui.text_in(&v.summary.driver, Rect::new(chip.x + 50.0, chip.y + 7.0, chip.w - 58.0, 19.0), 13.0, Weight::Bold, th().ink, Align::Left);
+    ui.text_in(&v.summary.bus, Rect::new(chip.x + 50.0, chip.y + 27.0, chip.w - 58.0, 17.0), 11.0, Weight::Regular, th().ink_muted, Align::Left);
 }
 
 fn category_button(ui: &mut Ui, category: Category, selected: bool, rect: Rect) -> bool {
     let (hovered, _, clicked) = ui.interact(id_of(&format!("pause-category-{category:?}")), rect);
     let t = ui.anim(id_of(&format!("pause-category-hover-{category:?}")), if hovered { 1.0 } else { 0.0 }, 0.08);
-    ui.p().rounded(rect, 7.0, if selected { ACCENT.alpha(0.10) } else { SURFACE_2.alpha(t) });
-    let color = if selected { ACCENT } else { INK_2.mix(INK, t) };
+    ui.p().rounded(rect, 7.0, if selected { th().accent.alpha(0.10) } else { th().surface_2.alpha(t) });
+    let color = if selected { th().accent } else { th().ink_2.mix(th().ink, t) };
     ui.icon(category.icon(), Vec2::new(rect.x + 23.0, rect.center().y), 22.0, color);
     ui.text_in(&omsi_ui::tr(category.title()), Rect::new(rect.x + 48.0, rect.y, (rect.w - 71.0).max(0.0), rect.h), 17.0, Weight::Medium, color, Align::Left);
     ui.icon("chevron_right", Vec2::new(rect.right() - 15.0, rect.center().y), 15.0, color.alpha(0.6));
@@ -119,8 +137,8 @@ pub(super) fn page(sh: &mut Shell, v: &PauseView, page: Rect, compact: bool) {
     let tight = compact && page.h < 420.0;
     if !tight {
         let header = Rect::new(x, 28.0, width, 22.0);
-        sh.ui.text_in(&omsi_ui::tr("Pause menu"), header, 11.0, Weight::Medium, INK_MUTED, Align::Left);
-        sh.ui.text_in(&omsi_ui::tr(if v.paused { "Paused" } else { "Menu" }), header, 11.0, Weight::Medium, ACCENT, Align::Right);
+        sh.ui.text_in(&omsi_ui::tr("Pause menu"), header, 11.0, Weight::Medium, th().ink_muted, Align::Left);
+        sh.ui.text_in(&omsi_ui::tr(if v.paused { "Paused" } else { "Menu" }), header, 11.0, Weight::Medium, th().accent, Align::Right);
     }
     let short = compact && page.h < 640.0;
     let mut top = 86.0;
@@ -136,9 +154,9 @@ pub(super) fn page(sh: &mut Shell, v: &PauseView, page: Rect, compact: bool) {
     }
     let editing = sh.quick_edit;
     let title_w = if category == Category::Home { (width - 98.0).max(0.0) } else { width };
-    sh.ui.text_in(&omsi_ui::tr(category.title()), Rect::new(x, top, title_w, 46.0), if category == Category::Home && width < 420.0 { 26.0 } else { 34.0 }, Weight::Bold, INK, Align::Left);
+    sh.ui.text_in(&omsi_ui::tr(category.title()), Rect::new(x, top, title_w, 46.0), if category == Category::Home && width < 420.0 { 26.0 } else { 34.0 }, Weight::Bold, th().ink, Align::Left);
     if !short {
-        sh.ui.text_in(&omsi_ui::tr(if sh.quick_edit { "Choose actions and set their order" } else { category.hint() }), Rect::new(x, top + 54.0, width, 28.0), 16.0, Weight::Regular, INK_2, Align::Left);
+        sh.ui.text_in(&omsi_ui::tr(if sh.quick_edit { "Choose actions and set their order" } else { category.hint() }), Rect::new(x, top + 54.0, width, 28.0), 16.0, Weight::Regular, th().ink_2, Align::Left);
     }
     if category == Category::Home {
         let edit_rect = Rect::new(x + width - 90.0, top + 4.0, 90.0, 38.0);
@@ -170,7 +188,7 @@ pub(super) fn page(sh: &mut Shell, v: &PauseView, page: Rect, compact: bool) {
         let text = omsi_ui::tr(if sh.quick_edit { "Up / Down: select | Space: toggle | Left / Right: reorder | R: reset | Esc: done" } else { "Esc resumes  |  Left / Right: categories  |  Up / Down: actions" });
         let footer = Rect::new(x, page.h - 27.0, width, 18.0);
         let shown = if sh.quick_edit && width < 750.0 { "↑ ↓ / Space / ← → / R / Esc" } else { &text };
-        sh.ui.text_in(shown, footer, 12.0, Weight::Regular, INK_MUTED, Align::Left);
+        sh.ui.text_in(shown, footer, 12.0, Weight::Regular, th().ink_muted, Align::Left);
         if sh.quick_edit { sh.ui.tooltip(footer, &text); }
     }
 }
@@ -200,7 +218,7 @@ fn compact_categories(sh: &mut Shell, ids: &[&str], area: Rect, keyboard: bool) 
                 picked = Some(*category);
             }
             if selected == *category {
-                ui.p().rounded(Rect::new(r.x + 8.0, r.bottom() - 2.0, (r.w - 16.0).max(0.0), 2.0), 1.0, ACCENT);
+                ui.p().rounded(Rect::new(r.x + 8.0, r.bottom() - 2.0, (r.w - 16.0).max(0.0), 2.0), 1.0, th().accent);
             }
         }
         y + 34.0
@@ -231,7 +249,7 @@ fn cards(sh: &mut Shell, v: &PauseView, category: Category, area: Rect) {
                 Rect::new(view.x, view.y, view.w, 40.0),
                 13.0,
                 Weight::Regular,
-                INK_MUTED,
+                th().ink_muted,
                 Align::Left,
             );
         }
@@ -265,22 +283,22 @@ fn action_card(ui: &mut Ui, v: &PauseView, index: usize, rect: Rect, keyboard: b
     let disabled = v.disabled.contains(id);
     let (hovered, _, clicked) = ui.interact(id_of(&format!("pause-card-{index}-{id}")), rect);
     let t = ui.anim(id_of(&format!("pause-card-hover-{index}-{id}")), if hovered && !disabled { 1.0 } else { 0.0 }, 0.08);
-    let fill = if keyboard { SURFACE.mix(ACCENT, 0.12) } else { SURFACE.mix(SURFACE_2, t) };
-    ui.p().rounded(rect, 10.0, fill);
+    let fill = if keyboard { th().surface.mix(th().accent, 0.12) } else { th().surface.mix(th().surface_2, t) };
+    ui.surface(rect, th().radius + 2.0, fill);
     if keyboard {
-        ui.p().rounded_border(rect.inset(1.0), 9.0, 2.0, ACCENT);
+        ui.p().rounded_border(rect.inset(1.0), 9.0, 2.0, th().accent);
     }
     let danger = *id == "endduty";
     let ink = if disabled {
-        INK_MUTED
+        th().ink_muted
     } else if danger {
-        DANGER_2
+        th().danger_2
     } else {
-        INK
+        th().ink
     };
-    let icon_c = if shortcut { ACCENT } else { INK_2 };
+    let icon_c = if shortcut { th().accent } else { th().ink_2 };
     let tile = Rect::new(rect.x + 18.0, rect.y + 37.0, 46.0, 46.0);
-    ui.p().rounded(tile, 8.0, if shortcut { ACCENT.alpha(0.10) } else { SURFACE_2 });
+    ui.p().rounded(tile, 8.0, if shortcut { th().accent.alpha(0.10) } else { th().surface_2 });
     let icon = plugin
         .as_ref()
         .and_then(|p| p.icon.as_deref())
@@ -292,8 +310,8 @@ fn action_card(ui: &mut Ui, v: &PauseView, index: usize, rect: Rect, keyboard: b
     let content = Rect::new(rect.x + 80.0, rect.y + 26.0, (rect.w - 112.0).max(0.0), 29.0);
     ui.text_in(text, content, 18.0, Weight::Bold, ink, Align::Left);
     let hint = omsi_ui::tr(action_hint(id));
-    ui.text_in(&hint, Rect::new(content.x, rect.y + 65.0, content.w, 25.0), 14.5, Weight::Regular, INK_MUTED, Align::Left);
-    ui.icon("chevron_right", Vec2::new(rect.right() - 19.0, rect.center().y), 17.0, INK_MUTED);
+    ui.text_in(&hint, Rect::new(content.x, rect.y + 65.0, content.w, 25.0), 14.5, Weight::Regular, th().ink_muted, Align::Left);
+    ui.icon("chevron_right", Vec2::new(rect.right() - 19.0, rect.center().y), 17.0, th().ink_muted);
     clicked && !disabled
 }
 

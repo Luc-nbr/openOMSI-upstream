@@ -30,10 +30,22 @@ mod widgets;
 
 // --- the game's look: the notifications' card, the menus' amber accent ------------------
 
-const CARD: Color = Color::rgba(14, 16, 20, 225.0 / 255.0);
+/// The card under a notification or a panel: openOMSI's near black, or the interface
+/// theme's surface (`omsi_ui::theme`).
+fn card() -> Color {
+    let p = omsi_ui::theme::th();
+    if p == omsi_ui::theme::Palette::OPENOMSI {
+        Color::rgba(14, 16, 20, 225.0 / 255.0)
+    } else {
+        p.surface.alpha(225.0 / 255.0)
+    }
+}
 const INK: Color = Color::rgba(236, 236, 236, 1.0);
 const DARK_INK: Color = Color::rgba(18, 14, 8, 1.0);
-const ACCENT: Color = Color::rgba(232, 160, 48, 1.0);
+/// The accent: openOMSI's amber, or the interface theme's.
+fn accent() -> Color {
+    omsi_ui::theme::th().accent
+}
 // (solid greys, the menus' own: the pipeline blends in linear light, where a tenth of white
 // over the dark card came out a light grey)
 const TRACK: Color = Color::rgba(62, 62, 62, 1.0);
@@ -500,7 +512,7 @@ impl Layout<'_> {
                     self.rounded(
                         Rect::new(track.x, track.y, fill, *height),
                         height * 0.5,
-                        e.color.map(color).unwrap_or(ACCENT),
+                        e.color.map(color).unwrap_or_else(accent),
                         None,
                     );
                 }
@@ -567,7 +579,7 @@ impl Layout<'_> {
         self.rounded(b, TILE_R, fill, Some(hit));
         let (ink, mark) = match e.color {
             Some(_) => (ink_on(fill), ink_on(fill)),
-            None => (INK, ACCENT),
+            None => (INK, accent()),
         };
         let room = (b.w - 2.0 * TILE_PAD).max(1.0);
         let widest = text
@@ -653,7 +665,7 @@ pub fn layout_typing(p: &Panel, fonts: &Fonts, backdrop: f32, typing: Option<&st
     out.background = p
         .background
         .map(color)
-        .unwrap_or(CARD.alpha(backdrop.min(1.0 / CARD.0[3])));
+        .unwrap_or(card().alpha(backdrop.min(1.0 / card().0[3])));
     out.accent = p.accent.map(color);
     out
 }
@@ -661,7 +673,7 @@ pub fn layout_typing(p: &Panel, fonts: &Fonts, backdrop: f32, typing: Option<&st
 /// A notification as a panel: the stripe in its colour, the icon and the title in a row
 /// above the text.
 pub fn toast_panel(t: &Toast) -> Panel {
-    let accent = t.color.unwrap_or(Rgba([232, 160, 48, 255]));
+    let accent = t.color.unwrap_or_else(|| Rgba(omsi_ui::theme::rgba8(accent())));
     let element = |kind: Kind, grow: bool, c: Option<Rgba>| Element {
         id: None,
         color: c,

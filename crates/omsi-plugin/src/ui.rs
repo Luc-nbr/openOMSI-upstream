@@ -15,6 +15,8 @@ use std::rc::Rc;
 
 mod menu;
 pub use menu::{MenuItem, MAX_MENU_ITEMS, MAX_MENU_LABEL};
+mod theme;
+pub use theme::ThemeInfo;
 
 /// `omsi.ui.version`: raised when something is added a plugin may want to test for.
 /// 2: images, checkboxes, sliders, text fields, tabs, charts, tables, draggable panels.
@@ -22,7 +24,8 @@ pub use menu::{MenuItem, MAX_MENU_ITEMS, MAX_MENU_LABEL};
 /// 4: boxes, stop lists, bars of several parts, a badge's weight, a table's column
 /// alignments and coloured cells.
 /// 5: panels that take a click without the mouse (`grab`).
-pub const VERSION: i64 = 5;
+/// 6: the interface themes (`ui.themes`, `ui.theme`, `ui.set_theme`).
+pub const VERSION: i64 = 6;
 /// Most panels of one plugin.
 pub const MAX_PANELS: usize = 16;
 /// Most elements of one panel, those in rows included.
@@ -345,6 +348,10 @@ pub struct UiState {
     menu_picks: Vec<(u64, String)>,
     /// The navigator's board (None: the navigator shows none).
     dock: Option<Dock>,
+    /// The game's interface themes, the one in use, and the one a plugin asked for.
+    themes: Vec<ThemeInfo>,
+    theme_now: String,
+    theme_ask: Option<String>,
 }
 
 /// The navigator's board as the plugins see it (`ui.dock`), in the panel's pixels.
@@ -363,7 +370,7 @@ pub struct Dock {
 impl Default for UiState {
     fn default() -> Self {
         // (until the game has drawn a frame: a 1080p screen)
-        UiState { panels: Vec::new(), toasts: Vec::new(), clicks: Vec::new(), changes: Vec::new(), focus: None, shown: true, screen: [1920.0, 1080.0, 1.0], serial: 0, typing: None, menu: Vec::new(), menu_picks: Vec::new(), dock: None }
+        UiState { panels: Vec::new(), toasts: Vec::new(), clicks: Vec::new(), changes: Vec::new(), focus: None, shown: true, screen: [1920.0, 1080.0, 1.0], serial: 0, typing: None, menu: Vec::new(), menu_picks: Vec::new(), dock: None, themes: Vec::new(), theme_now: String::new(), theme_ask: None }
     }
 }
 

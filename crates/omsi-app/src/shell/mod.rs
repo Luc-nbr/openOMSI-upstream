@@ -68,6 +68,16 @@ pub(crate) struct Shell {
     /// the `shot` pictures.
     pub(crate) logo_tex: Option<usize>,
     shot_logo: Option<usize>,
+    /// The interface theme whose logo `logo_tex` is (none: openOMSI's), and the name it shows
+    /// beside it (none: "openOMSI").
+    logo_of: Option<String>,
+    pub(crate) logo_title: Option<String>,
+    /// The game's picture blurred, for a glass theme's panels (`themes::blur`): sent to the
+    /// graphics card with the next frame; its texture there, kept for the next time; and
+    /// whether it is shown now.
+    backdrop: Option<(u32, u32, Vec<u8>)>,
+    backdrop_tex: Option<usize>,
+    backdrop_on: bool,
     /// Physical pixels per point of the last frame.
     pub(crate) scale: f32,
     /// The mouse was over a panel of the screens in the last frame.
@@ -91,7 +101,7 @@ impl Shell {
         // (the desktop launcher's calm look: graphite surfaces, no edges)
         let mut ui = Ui::new();
         ui.flat = true;
-        Shell { process_prompt: None, process_dialog: Default::default(), ui, pause_category: Default::default(), quick_edit: false, quick_focus: 0, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
+        Shell { process_prompt: None, process_dialog: Default::default(), ui, pause_category: Default::default(), quick_edit: false, quick_focus: 0, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, logo_of: None, logo_title: None, backdrop: None, backdrop_tex: None, backdrop_on: false, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
     }
 
     /// A frame of the screens begins: the window's size in physical pixels and how many of
@@ -106,6 +116,8 @@ impl Shell {
         self.scale = next_scale;
         self.ui.input.touch = crate::platform::touch_controls();
         self.ui.begin(Vec2::new(width / self.scale, height / self.scale), self.scale, dt);
+        self.ui.backdrop = self.backdrop_tex.filter(|_| self.backdrop_on);
+        self.logo_title = crate::themes::current().and_then(|t| t.title.clone());
     }
 
     /// The frame of the screens is drawn: its layers kept for `render`.
@@ -131,6 +143,23 @@ impl Shell {
     /// The photo to show under the screens (RGBA, sRGB), sent with the next frame.
     pub(crate) fn set_picture(&mut self, w: u32, h: u32, rgba: Vec<u8>) {
         self.picture = Some((w, h, rgba));
+    }
+
+    /// The game's picture blurred (RGBA, sRGB), for a glass theme's panels from the next frame.
+    pub(crate) fn set_backdrop(&mut self, w: u32, h: u32, rgba: Vec<u8>) {
+        self.backdrop = Some((w, h, rgba));
+        self.backdrop_on = true;
+    }
+
+    /// The blurred picture is no longer shown (until the next `set_backdrop`).
+    pub(crate) fn drop_backdrop(&mut self) {
+        self.backdrop = None;
+        self.backdrop_on = false;
+    }
+
+    /// A blurred picture is shown, or on its way to the card.
+    pub(crate) fn has_backdrop(&self) -> bool {
+        self.backdrop_on
     }
 
     /// The photo is no longer shown.
@@ -181,10 +210,32 @@ impl Shell {
             self.ui.atlas.mark_all_dirty();
             self.picture_tex = None;
             self.logo_tex = None;
+            // (the blurred picture went with the old card: the game makes it again)
+            self.backdrop_tex = None;
+            self.backdrop_on = self.backdrop.is_some();
         }
         let Some((gpu, _)) = self.gpu.as_mut() else { return };
+        // the logo: the interface theme's, when it has one
+        let theme = crate::themes::current().filter(|t| t.logo.is_some());
+        let logo_of = theme.as_ref().map(|t| t.id.clone());
+        if logo_of != self.logo_of {
+            if let Some(id) = self.logo_tex.take() {
+                gpu.free(id);
+            }
+            self.logo_of = logo_of;
+        }
         if self.logo_tex.is_none() {
-            self.logo_tex = logo_pixels().map(|px| gpu.add_image(&r.device, &r.queue, LOGO_PX, LOGO_PX, &px));
+            let px = match theme.as_ref().and_then(|t| t.logo.as_ref()) {
+                Some(logo) => logo.square_pixels(LOGO_PX),
+                None => logo_pixels(),
+            };
+            self.logo_tex = px.map(|px| gpu.add_image(&r.device, &r.queue, LOGO_PX, LOGO_PX, &px));
+        }
+        if let Some((bw, bh, px)) = self.backdrop.take() {
+            match self.backdrop_tex {
+                Some(id) => gpu.update_image(&r.device, &r.queue, id, bw, bh, &px),
+                None => self.backdrop_tex = Some(gpu.add_image(&r.device, &r.queue, bw, bh, &px)),
+            }
         }
         if let Some((pw, ph, px)) = self.picture.take() {
             match self.picture_tex {

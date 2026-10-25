@@ -2,7 +2,7 @@
 //! with a stripe, for a note or an advice - and stop lists, the stops on a rail with their
 //! times, as the navigator's duty board drew them; and a bar's parts and a badge's weight.
 
-use super::{color, ink_on, Item, Layout, ACCENT, BADGE_H, BADGE_PAD, BADGE_PX};
+use super::{color, ink_on, Item, Layout, accent, BADGE_H, BADGE_PAD, BADGE_PX};
 use glam::Vec2;
 use omsi_plugin::ui::{Element, Kind, Rgba, Stop, StopState};
 use omsi_ui::{Color, Rect, Weight};
@@ -52,7 +52,7 @@ impl Layout<'_> {
     pub(crate) fn nav_emit(&mut self, e: &Element, r: Rect) {
         match &e.kind {
             Kind::Box { children, gap } => {
-                let tint = e.color.map(color).unwrap_or(ACCENT);
+                let tint = e.color.map(color).unwrap_or_else(accent);
                 self.rounded(r, BOX_R, tint.alpha(BOX_TINT), None);
                 self.rounded(Rect::new(r.x, r.y, BOX_STRIPE, r.h), BOX_STRIPE * 0.5, tint, None);
                 let x = r.x + BOX_STRIPE + BOX_PAD.0;
@@ -68,7 +68,7 @@ impl Layout<'_> {
                 }
             }
             Kind::Stops { stops, size } => {
-                let rail = e.color.map(color).unwrap_or(ACCENT);
+                let rail = e.color.map(color).unwrap_or_else(accent);
                 let row = STOP_ROW * size / 13.0;
                 for (i, s) in stops.iter().enumerate() {
                     let rr = Rect::new(r.x, r.y + i as f32 * row, r.w, row);
@@ -106,7 +106,7 @@ impl Layout<'_> {
     pub(crate) fn badge(&mut self, e: &Element, r: Rect, text: &str, text_color: Option<Rgba>, wt: Weight) {
         let w = self.natural(e).min(r.w);
         let b = Rect::new(r.x, r.y + (r.h - BADGE_H) * 0.5, w, BADGE_H);
-        let fill = e.color.map(color).unwrap_or(ACCENT);
+        let fill = e.color.map(color).unwrap_or_else(accent);
         self.rounded(b, BADGE_H * 0.5, fill, None);
         let t = self.fit(text, BADGE_PX, wt, w - 2.0 * BADGE_PAD);
         let tw = self.width(&t, BADGE_PX, wt);
