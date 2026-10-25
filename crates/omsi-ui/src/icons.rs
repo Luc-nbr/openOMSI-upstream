@@ -195,12 +195,24 @@ pub fn marks(src: &str) -> Vec<Mark> {
         let (Some(id), Some(at)) = (attr(tag, "id"), attr(tag, "data-at").and_then(|a| a.parse::<f32>().ok())) else { continue };
         let Some(node) = tree.node_by_id(&id) else { continue };
         let b = node.abs_bounding_box();
+        // (the box is the canvas's, the view box applied: back into the SVG's own units, where
+        // the element is grown round its middle)
+        // (the element's place on the canvas is its parent's transform after its own: the
+        // parent's, undone, gives the middle where the wrapper round it stands)
+        let mut c = resvg::tiny_skia::Point::from_xy(b.x() + b.width() * 0.5, b.y() + b.height() * 0.5);
+        let own = match node {
+            resvg::usvg::Node::Group(g) => g.transform(),
+            _ => resvg::tiny_skia::Transform::identity(),
+        };
+        if let Some(back) = own.invert().and_then(|undo| node.abs_transform().pre_concat(undo).invert()) {
+            back.map_point(&mut c);
+        }
         out.push(Mark {
             id,
             at: at.clamp(0.0, 1.0),
             delay: attr(tag, "data-delay").and_then(|d| d.parse::<f32>().ok()).unwrap_or(0.0).clamp(0.0, 10.0),
             blink: attr(tag, "data-blink").is_some(),
-            center: (b.x() + b.width() * 0.5, b.y() + b.height() * 0.5),
+            center: (c.x, c.y),
         });
     }
     out
@@ -286,6 +298,19 @@ mod tests {
         assert_eq!(none, 0);
         assert!(half > all / 6 && half < all / 3, "{half} of {all}");
         assert!(super::staged_svg(src, &m, |_| Stage::Hidden).matches("</g>").count() == 4);
+        // (a view box that does not start at 0, as a logo cut to its ink has it: the middle in
+        // the SVG's own units, so that a mark grows where it stands)
+        let moved = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="96 54 200 100"><g id="stop" data-at="0.5" transform="translate(-20 0)"><circle cx="210" cy="104" r="20" fill="#fff"/></g></svg>"##;
+        let m = super::marks(moved);
+        let (cx, cy) = m[0].center;
+        assert!((cx - 190.0).abs() < 0.01 && (cy - 104.0).abs() < 0.01, "{:?}", m[0].center);
+        let ink_at = |svg: &str| {
+            let px = super::rasterize_rgba(svg, 200, 100).unwrap();
+            let (n, sx, sy) = px.chunks(4).enumerate().filter(|(_, p)| p[3] > 128).fold((0.0f32, 0.0f32, 0.0f32), |(n, x, y), (i, _)| (n + 1.0, x + (i % 200) as f32, y + (i / 200) as f32));
+            (sx / n, sy / n)
+        };
+        let (whole, half) = (ink_at(moved), ink_at(&super::staged_svg(moved, &m, |_| Stage::Scale(0.5))));
+        assert!((whole.0 - half.0).abs() < 1.0 && (whole.1 - half.1).abs() < 1.0, "{whole:?} {half:?}");
     }
 
     /// A ring round a box and a line under a word, as a logo has it: its length, and drawn
