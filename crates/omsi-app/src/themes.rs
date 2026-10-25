@@ -541,4 +541,15 @@ mod tests {
         assert!((1..w).all(|x| at(x) <= at(x - 1)), "it falls evenly");
         assert!(px.chunks(4).all(|p| p[3] == 255));
     }
+
+    /// The options' row for the theme is in the player's language.
+    #[test]
+    fn the_theme_row_is_translated() {
+        let desc = "The look of the menus, the panels and the loading screen: openOMSI's own, or one a mod or plugin brings";
+        crate::with_test_language("nl", || {
+            assert_eq!(omsi_ui::tr("Interface theme"), "Thema van de interface");
+            assert!(omsi_ui::tr(desc).starts_with("Hoe de menu's"));
+        });
+        crate::with_test_language("de", || assert_eq!(omsi_ui::tr("Interface theme"), "Design der Oberfläche"));
+    }
 }
