@@ -303,8 +303,11 @@ pub struct Navigator {
     /// That panel's map in this frame's picture (texture pixels) and its cards, for `draw`:
     /// Some(None) a frame without a map; None no such panel.
     framed: Option<Option<(Rect, bool)>>,
-    /// What `framed` was when the picture was last drawn (drawn again at once when it changes).
-    framed_drawn: Option<Option<(Rect, bool)>>,
+    /// The colour that panel gives the navigator's card (None: the card's own).
+    frame_card: Option<Color>,
+    /// What `framed` and `frame_card` were when the picture was last drawn (drawn again at
+    /// once when they change).
+    framed_drawn: (Option<Option<(Rect, bool)>>, Option<Color>),
     /// A board was asked for once: the lower part opened for it by itself then.
     dock_seen: bool,
     /// The board's height in this frame's picture (physical pixels), for `draw`.
@@ -542,7 +545,8 @@ impl Navigator {
             dock_slot: None,
             frame_panel: None,
             framed: None,
-            framed_drawn: None,
+            frame_card: None,
+            framed_drawn: (None, None),
             dock_seen: false,
             board: None,
             speed_avg: 8.0,
@@ -1308,6 +1312,7 @@ impl Navigator {
         let whole = self.frame_panel.filter(|_| !self.cockpit_display && self.shown > 0.99);
         let frame_room = (sh - 32.0 * s).max(map_h).round();
         self.framed = whole.map(|p| p.map.map(|m| framed_map(m, pw, p.height.max(1.0).min(frame_room).round())).filter(|(r, _)| r.w >= 1.0 && r.h >= 1.0));
+        self.frame_card = whole.and_then(|p| p.background);
         self.board = self.dock.filter(|_| whole.is_none() && self.schedule && !self.cockpit_display && self.shown > 0.99).map(|h| h.max(1.0).min(room).round());
         let sched = match self.board {
             Some(h) => h,
@@ -1351,9 +1356,9 @@ impl Navigator {
         self.draw_every = draw_every(self.draw_every, self.frame_dt);
         self.frames_since_drawn = self.frames_since_drawn.saturating_add(1);
         // (a frame panel's map moved, or came or went: at once, not a few frames late)
-        if !self.city.open && (resized || self.frames_since_drawn >= self.draw_every || self.framed != self.framed_drawn) {
+        if !self.city.open && (resized || self.frames_since_drawn >= self.draw_every || (self.framed, self.frame_card) != self.framed_drawn) {
             self.frames_since_drawn = 0;
-            self.framed_drawn = self.framed;
+            self.framed_drawn = (self.framed, self.frame_card);
             self.draw(renderer, &view, (w, h), map_h, f);
         }
         // (the small navigator steps aside while the city map is open)
@@ -1375,6 +1380,8 @@ impl Navigator {
 pub struct FramePanel {
     pub height: f32,
     pub map: Option<FrameMap>,
+    /// The colour of the navigator's card under it (its `background`; None: the card's own).
+    pub background: Option<Color>,
 }
 
 /// The navigator's map in a frame panel: x, y, width and height from the panel's top left

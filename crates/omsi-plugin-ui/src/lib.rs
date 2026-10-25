@@ -1129,9 +1129,7 @@ impl PluginPanels {
                 let caret = typing.as_ref().filter(|t| t.0 == e.owner && t.1 == e.id).map(|t| t.2.as_str());
                 card.laid = match dock {
                     Some(_) => {
-                        // (over the navigator's own card colour unless it says another)
-                        let p = pui::Panel { width, accent: None, radius: 0.0, background: Some(e.panel.background.unwrap_or(pui::Rgba([0, 0, 0, 0]))), ..e.panel.clone() };
-                        Laid { flat: true, ..layout_typing(&p, fonts, f.backdrop, caret) }
+                        Laid { flat: true, ..layout_typing(&nav::in_navigator(&e.panel, width), fonts, f.backdrop, caret) }
                     }
                     None => layout_typing(&e.panel, fonts, f.backdrop, caret),
                 };
@@ -1146,7 +1144,8 @@ impl PluginPanels {
             match dock {
                 Some(d) => {
                     let map = card.laid.map.map(|(r, cards)| DockedMap { rect: [(r.x * ck).round(), (r.y * ck).round(), (r.w * ck).round(), (r.h * ck).round()], cards });
-                    self.docked = Some(Docked { height: (card.laid.h * ck).ceil(), frame: e.panel.frame, map });
+                    let background = e.panel.background.filter(|_| e.panel.frame).map(color);
+                    self.docked = Some(Docked { height: (card.laid.h * ck).ceil(), frame: e.panel.frame, map, background });
                     dock_said = Some(pui::Dock { width, room: d.room / ck, height: card.full_h, owner: Some(e.owner), frame: d.frame });
                     // (until the navigator made room for it, it is laid out, not shown)
                     let Some(at) = d.at else { continue };

@@ -384,7 +384,9 @@ a plugin can leave out rows that do not fit.
 
 With `frame = true` (`omsi.ui.version` 6) the panel fills the navigator's whole frame instead:
 from its top, as wide as the navigator and as tall as the panel comes to (as far as the window
-has room), on the navigator's card with its rounded corners. The map, the place row and the
+has room), on the navigator's card with its rounded corners - in the panel's `background` where
+it gives one, which the navigator paints as its card (with its corners and its opacity setting),
+not the panel as a square of its own. The map, the place row and the
 stop list make way for it; the map shows only where the panel has a `map` element, with its
 own rounded corners, and the navigator's cards over it (the next turn, the clock, the speed,
 the next stop) unless the element says `cards = false`. The navigator stays the navigator: it

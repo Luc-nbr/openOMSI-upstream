@@ -2,8 +2,8 @@
 //! houses standing in 3D (or flat, the `nav_3d` setting), the route over the roads, the traffic,
 //! and cards floating over it after Apple Maps' driving view - the next turn top left, the time
 //! and temperatures top right, the speed and its limit bottom left, the next stop at the bottom.
-//! Under a plugin's panel that fills the frame (`frame_panel`) the card alone, and the map
-//! where that panel says, with its own corners.
+//! Under a plugin's panel that fills the frame (`frame_panel`) the card alone, in the panel's
+//! colour where it gives one, and the map where that panel says, with its own corners.
 
 use super::mapmesh::GroundLook;
 use super::style::{self, Palette};
@@ -131,7 +131,7 @@ impl Navigator {
         // --- the land colour under everything, the traffic, the vehicles
         let mut bg = Painter::new();
         if framed {
-            bg.rounded(panel, radius, pal.card);
+            bg.rounded(panel, radius, self.frame_card.unwrap_or(pal.card));
             bg.rounded(map, map_radius, pal.land);
         } else {
             bg.rounded(panel, radius, pal.land);
@@ -272,7 +272,7 @@ impl Navigator {
         let (pw, ph) = (size.0 as f32, size.1 as f32);
         let s = pw / 360.0;
         let mut bg = Painter::new();
-        bg.rounded(Rect::new(0.0, 0.0, pw, ph), radius, pal.card);
+        bg.rounded(Rect::new(0.0, 0.0, pw, ph), radius, self.frame_card.unwrap_or(pal.card));
         let n_bg = bg.len();
         let mut ui = Painter::new();
         self.draw_grip(&mut ui, pw, ph, s, pal);

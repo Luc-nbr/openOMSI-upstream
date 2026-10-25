@@ -6,7 +6,7 @@
 
 use super::{color, ink_on, Item, Layout, ACCENT, BADGE_H, BADGE_PAD, BADGE_PX};
 use glam::Vec2;
-use omsi_plugin::ui::{Element, Kind, Rgba, Stop, StopState};
+use omsi_plugin::ui::{Element, Kind, Panel, Rgba, Stop, StopState};
 use omsi_ui::{Color, Rect, Weight};
 
 /// The panel for the navigator as it was laid out, in physical pixels.
@@ -18,6 +18,18 @@ pub struct Docked {
     pub frame: bool,
     /// Where the navigator's map goes in it (a `map` element), from the panel's top.
     pub map: Option<DockedMap>,
+    /// The colour of the navigator's card under a panel in the whole frame (its `background`;
+    /// None: the navigator's own).
+    pub background: Option<Color>,
+}
+
+/// A panel as it is laid out for the navigator: as wide as it, flat (no accent, no corners)
+/// and see-through over the navigator's card. One in the board paints its `background` over
+/// the card; one in the whole frame has the navigator paint the card in it, rounded as the
+/// card is (a square of its own would stand out at the corners).
+pub(crate) fn in_navigator(p: &Panel, width: f32) -> Panel {
+    let background = if p.frame { None } else { p.background };
+    Panel { width, accent: None, radius: 0.0, background: Some(background.unwrap_or(Rgba([0, 0, 0, 0]))), ..p.clone() }
 }
 
 /// The navigator's map in a panel that fills its frame: where it goes (physical pixels, from
@@ -229,6 +241,17 @@ mod tests {
     /// A panel that fills the navigator's frame says where its map goes: the room of its
     /// first `map` element (the navigator's own map's height unless it says), drawn empty;
     /// cut off, as much of it as is left.
+    /// A panel in the navigator is laid out see-through; one in the whole frame leaves its
+    /// background to the navigator's card (rounded as the card is), one in the board paints it.
+    #[test]
+    fn the_whole_frame_s_background_is_the_navigators_card() {
+        let frame = panel(r##"{ anchor = "navigator", frame = true, background = "#141A26", accent = "#FF0000", radius = 8 }"##);
+        let p = super::in_navigator(&frame, 360.0);
+        assert_eq!((p.width, p.background, p.accent, p.radius), (360.0, Some(Rgba([0, 0, 0, 0])), None, 0.0));
+        let board = panel(r##"{ anchor = "navigator", background = "#141A26" }"##);
+        assert_eq!(super::in_navigator(&board, 360.0).background, Some(Rgba([0x14, 0x1A, 0x26, 255])));
+    }
+
     #[test]
     fn a_map_element_is_room_for_the_navigators_map() {
         let fonts = Fonts::new();

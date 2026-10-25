@@ -61,6 +61,7 @@ impl App {
             n.frame_panel = docked.filter(|d| d.frame).map(|d| navigator::FramePanel {
                 height: d.height,
                 map: d.map.map(|m| navigator::FrameMap { rect: m.rect, cards: m.cards }),
+                background: d.background,
             });
         }
         self.frame_navigator(dt, hud, vr_active, nav_hidden, vr_nav_display);

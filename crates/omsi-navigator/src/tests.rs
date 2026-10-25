@@ -586,5 +586,5 @@ fn a_frame_panel_s_map_stays_inside_the_navigator() {
     assert_eq!(framed_map(m([10.0, 600.0, 340.0, 272.0]), 360.0, 500.0).0.h, 0.0);
     // (no frame panel: the navigator lays itself out as ever)
     let n = Navigator::new(true, 0.85, "bottom-left");
-    assert_eq!((n.frame_panel, n.framed), (None, None));
+    assert_eq!((n.frame_panel, n.framed, n.frame_card), (None, None, None));
 }
