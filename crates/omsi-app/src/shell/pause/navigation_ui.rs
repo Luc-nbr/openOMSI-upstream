@@ -28,10 +28,11 @@ fn session_action(sh: &mut Shell, v: &PauseView, id: &str, rect: Rect, kind: But
     let primary = kind == ButtonKind::Primary;
     let fill = if primary { th().accent.mix(th().accent_hover, t) } else { th().surface_2.mix(th().danger_2.alpha(0.15), t) };
     let ink = if primary { th().accent_ink } else { th().danger_2 };
-    if primary {
-        ui.p().rounded(rect, corner(12.0), fill);
-    } else {
-        ui.surface(rect, corner(12.0), fill);
+    // (a button is solid in every look, glass or not: the glass is the panels')
+    ui.p().rounded(rect, corner(12.0), fill);
+    if !primary && th().glass.is_some() {
+        // (on glass a hairline of the red sets it off, as the add-ons' own danger buttons)
+        ui.p().rounded_border(rect, corner(12.0), 1.0, th().danger_2.alpha(0.35 + 0.25 * t));
     }
     let width = ui.width(&label, 18.0, Weight::Bold);
     let x = rect.center().x - (width + 32.0) * 0.5;
@@ -56,11 +57,18 @@ pub(super) fn rail(sh: &mut Shell, v: &PauseView) {
     } else {
         ui.p().rect(r, th().sidebar);
     }
-    if let Some(tex) = sh.logo_tex {
+    // the game's name and version: openOMSI's icon and name; a theme's wordmark across the top,
+    // or its icon and name, over openOMSI's version
+    if let (Some(tex), Some(aspect)) = (sh.logo_tex, sh.logo_wide) {
+        // (as wide as the rail's buttons, at most 52 high: the version under it before Resume)
+        let h = 52.0f32.min((RAIL_W - 32.0) / aspect);
+        ui.image(Rect::new(16.0, 10.0, h * aspect, h), tex, 0.0);
+        ui.text_in(&format!("openOMSI {}", crate::startup::VERSION), Rect::new(18.0, 10.0 + h, RAIL_W - 36.0, 13.0), 9.5, Weight::Regular, th().ink_muted, Align::Left);
+    } else if let Some(tex) = sh.logo_tex {
         ui.image(Rect::new(18.0, 18.0, 32.0, 32.0), tex, 7.0);
     }
-    // the game's name and version; a theme's name over openOMSI's version
-    match sh.logo_title.as_deref() {
+    match sh.logo_title.as_deref().filter(|_| sh.logo_wide.is_none()) {
+        _ if sh.logo_wide.is_some() => {}
         Some(title) => {
             ui.text_in(title, Rect::new(60.0, 17.0, RAIL_W - 72.0, 22.0), 18.0, Weight::Bold, th().ink, Align::Left);
             ui.text_in(&format!("openOMSI {}", crate::startup::VERSION), Rect::new(60.0, 38.0, RAIL_W - 72.0, 18.0), 11.0, Weight::Regular, th().ink_muted, Align::Left);
@@ -105,7 +113,7 @@ pub(super) fn rail(sh: &mut Shell, v: &PauseView) {
 fn driver(sh: &mut Shell, v: &PauseView, height: f32) {
     let ui = &mut sh.ui;
     let chip = Rect::new(16.0, height - 66.0, RAIL_W - 32.0, 52.0);
-    ui.surface(chip, corner(8.0), th().surface);
+    ui.p().rounded(chip, corner(8.0), th().surface);
     let av = Vec2::new(chip.x + 24.0, chip.center().y);
     ui.p().circle(av, 16.0, th().surface_3);
     let initial = v.summary.driver.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
@@ -285,7 +293,11 @@ fn action_card(ui: &mut Ui, v: &PauseView, index: usize, rect: Rect, keyboard: b
     let (hovered, _, clicked) = ui.interact(id_of(&format!("pause-card-{index}-{id}")), rect);
     let t = ui.anim(id_of(&format!("pause-card-hover-{index}-{id}")), if hovered && !disabled { 1.0 } else { 0.0 }, 0.08);
     let fill = if keyboard { th().surface.mix(th().accent, 0.12) } else { th().surface.mix(th().surface_2, t) };
-    ui.surface(rect, corner(18.0), fill);
+    // (a card is a button: solid in every look - the glass is the panels' and the rail's)
+    ui.p().rounded(rect, corner(18.0), fill);
+    if th().glass.is_some() && !keyboard {
+        ui.p().rounded_border(rect, corner(18.0), 1.0, omsi_ui::Color::WHITE.alpha(0.08 + 0.06 * t));
+    }
     if keyboard {
         ui.p().rounded_border(rect, corner(18.0), 2.0, th().accent);
     }

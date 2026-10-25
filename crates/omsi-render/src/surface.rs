@@ -135,6 +135,13 @@ impl<'w> SurfaceState<'w> {
             return false;
         }
         self.lost = renderer.errors.device_lost.clone();
+        // (made before the renderer, the window's picture could not be copied from yet: it can
+        // now where the window allows it - the glass behind the game's screens, see `picture`)
+        let copy = renderer.adapter.as_ref().is_some_and(|a| self.surface.get_capabilities(a).usages.contains(wgpu::TextureUsages::COPY_SRC));
+        if copy && !self.config.usage.contains(wgpu::TextureUsages::COPY_SRC) {
+            self.config.usage |= wgpu::TextureUsages::COPY_SRC;
+            self.surface.configure(device, &self.config);
+        }
         true
     }
 

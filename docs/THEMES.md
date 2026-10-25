@@ -58,7 +58,7 @@ Everything is optional; what a theme leaves out stays openOMSI's.
 | `radius` | The corners of the panels (0 to 24 points; openOMSI's are 8). |
 | `glass` | `true`, or the glass's `opacity` (how much of a panel's colour lies over the blurred picture, 0 to 1), `blur` (its radius in points, 0 to 64), `edge` and `highlight` (the light edge round a panel and the sheen at its top, 0 to 1). |
 | `loading` | The loading screen: `background`, `text` (the map's name and the tips), `logo` and `progress`. |
-| `logo` | The logo at the top of the pause menu (drawn 32 points square). |
+| `logo` | The logo at the top of the pause menu: an icon (drawn 32 points square, with `title` beside it), or a wordmark - a logo at least 1.6 times as wide as high, drawn across the top of the rail in place of the icon and the name. |
 
 **Colours.** The names are those of the game's palette: `accent`, `accent_hover`, `accent_ink`
 (text on the accent), `accent_2`, `background`, `sidebar`, `surface`, `surface_2`, `surface_3` (the
@@ -96,13 +96,15 @@ after the loading reached it:
 
 ## Glass
 
-With `glass`, the pause menu's rail, its cards and panels, and the settings windows are panes
+With `glass`, the pause menu's rail, the panels of its pages and lists, and the settings windows are panes
 of frosted glass: the game's picture behind them blurred, the panel's colour over it at the
 glass's opacity, a light edge and a sheen at the top. The picture is the frame the game has just
 drawn, copied and blurred on the graphics card every frame the menu is open (nothing is read
 back, nothing waits for the graphics card), so it moves where the game goes on behind the menu
 (a LAN session, which does not pause). Where the window's picture cannot be copied, the panels
 are see-through without the blur. In a headset the menu takes the theme's colours but no glass.
+What is clicked - the buttons, the action cards, the fields - stays solid in the theme's colours
+on the glass, so that it reads as a control and not as a pane.
 
 ## For plugins
 

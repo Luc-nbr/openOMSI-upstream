@@ -74,8 +74,13 @@ pub(crate) struct Shell {
     /// beside it (none: "openOMSI").
     logo_of: Option<String>,
     pub(crate) logo_title: Option<String>,
+    /// A theme's logo that is a wordmark (wider than `WIDE` times its height): its width over
+    /// its height. The rail then shows it across its top in place of the icon and the name.
+    pub(crate) logo_wide: Option<f32>,
     /// A glass theme's picture behind the screens (`capture_backdrop`).
     glass: Option<GlassPicture>,
+    /// When the glass's picture was last taken (none: it is to be taken; see `glass_due`).
+    glass_taken: Option<std::time::Instant>,
     /// Physical pixels per point of the last frame.
     pub(crate) scale: f32,
     /// The mouse was over a panel of the screens in the last frame.
@@ -106,13 +111,15 @@ struct GlassPicture {
 
 /// The vertex buffer of the glass's passes (0 is the screens').
 const GLASS_BUFFER: usize = 1;
+/// How often a second the glass's picture is taken while the game goes on behind the menu.
+const GLASS_RATE: f32 = 30.0;
 
 impl Shell {
     pub(crate) fn new() -> Shell {
         // (the desktop launcher's calm look: graphite surfaces, no edges)
         let mut ui = Ui::new();
         ui.flat = true;
-        Shell { process_prompt: None, process_dialog: Default::default(), ui, pause_category: Default::default(), quick_edit: false, pause_hidden: true, quick_focus: 0, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, logo_of: None, logo_title: None, glass: None, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
+        Shell { process_prompt: None, process_dialog: Default::default(), ui, pause_category: Default::default(), quick_edit: false, pause_hidden: true, quick_focus: 0, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, logo_of: None, logo_title: None, logo_wide: None, glass: None, glass_taken: None, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
     }
 
     /// A frame of the screens begins: the window's size in physical pixels and how many of
@@ -128,7 +135,9 @@ impl Shell {
         self.ui.input.touch = crate::platform::touch_controls();
         self.ui.begin(Vec2::new(width / self.scale, height / self.scale), self.scale, dt);
         self.ui.backdrop = self.glass.as_ref().and_then(|g| g.passes.last()).map(|p| p.1);
-        self.logo_title = crate::themes::current().and_then(|t| t.title.clone());
+        let theme = crate::themes::current();
+        self.logo_title = theme.as_ref().and_then(|t| t.title.clone());
+        self.logo_wide = theme.as_ref().and_then(|t| t.logo.as_ref()).map(|l| l.aspect()).filter(|a| *a >= WIDE);
     }
 
     /// The frame of the screens is drawn: its layers kept for `render`.
@@ -214,7 +223,23 @@ impl Shell {
     /// to twice that, each pass four taps a texel of the picture before apart, averaged (a box
     /// of four at each step). Nothing is read back and nothing waits for the graphics card: a
     /// copy and three passes into pictures of a sixteenth of the window and less.
+    /// Whether the glass's picture is to be taken this frame: when the menu has just opened,
+    /// and while the game goes on behind it (not `paused`) at most `GLASS_RATE` times a second
+    /// - a paused picture does not change, and the blur hides a frame's movement anyway.
+    pub(crate) fn glass_due(&self, paused: bool) -> bool {
+        match self.glass_taken {
+            None => true,
+            Some(t) => !paused && t.elapsed().as_secs_f32() >= 1.0 / GLASS_RATE,
+        }
+    }
+
+    /// The menu with the glass is closed: its picture is taken anew when it opens again.
+    pub(crate) fn glass_closed(&mut self) {
+        self.glass_taken = None;
+    }
+
     pub(crate) fn capture_backdrop(&mut self, r: &Renderer, src: &wgpu::Texture, blur: f32) {
+        self.glass_taken = Some(std::time::Instant::now());
         self.ensure_gpu(r);
         let Some((gpu, format)) = self.gpu.as_mut() else { return };
         let format = *format;
@@ -289,11 +314,16 @@ impl Shell {
             self.logo_of = logo_of;
         }
         if self.logo_tex.is_none() {
-            let px = match theme.as_ref().and_then(|t| t.logo.as_ref()) {
-                Some(logo) => logo.square_pixels(LOGO_PX),
-                None => logo_pixels(),
+            // (a wordmark at its own width, for the rail's top; an icon square)
+            let (px, w, h) = match theme.as_ref().and_then(|t| t.logo.as_ref()) {
+                Some(logo) if logo.aspect() >= WIDE => {
+                    let h = (LOGO_WIDE_PX as f32 / logo.aspect()).round().max(1.0) as u32;
+                    (logo.pixels(LOGO_WIDE_PX, h, None, &|_| omsi_ui::icons::Stage::Shown), LOGO_WIDE_PX, h)
+                }
+                Some(logo) => (logo.square_pixels(LOGO_PX), LOGO_PX, LOGO_PX),
+                None => (logo_pixels(), LOGO_PX, LOGO_PX),
             };
-            self.logo_tex = px.map(|px| gpu.add_image(&r.device, &r.queue, LOGO_PX, LOGO_PX, &px));
+            self.logo_tex = px.map(|px| gpu.add_image(&r.device, &r.queue, w, h, &px));
         }
         if let Some((pw, ph, px)) = self.picture.take() {
             match self.picture_tex {
@@ -342,6 +372,10 @@ const LOGO: &str = include_str!("../../../../launcher/ui/logo.svg");
 // (drawn 32 interface pixels wide, twice that on a Retina screen: a texture of about that
 // size, since a much larger one squeezed without mipmaps came out blurred and jagged)
 const LOGO_PX: u32 = 64;
+/// A theme's wordmark: as wide as this in the texture (twice the rail's width it is drawn at,
+/// for a Retina screen), and how much wider than high a logo is to be one.
+const LOGO_WIDE_PX: u32 = 480;
+const WIDE: f32 = 1.6;
 
 fn logo_pixels() -> Option<Vec<u8>> {
     omsi_ui::icons::rasterize_rgba(LOGO, LOGO_PX, LOGO_PX)
