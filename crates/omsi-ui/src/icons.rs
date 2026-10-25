@@ -133,8 +133,161 @@ pub fn progress_svg(src: &str, id: &str, len: f32, frac: f32, track: f32) -> Str
     out
 }
 
+/// An element of a loading logo that comes in when the loading reaches it: a top-level element
+/// of the SVG with an `id` and `data-at="0.4"` (how far along the progress, 0 to 1). It pops in
+/// - or, with `data-blink`, flashes twice, a light - `data-delay` seconds after that.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mark {
+    pub id: String,
+    pub at: f32,
+    pub delay: f32,
+    pub blink: bool,
+    /// The middle of the element (in the SVG's units): what it grows from.
+    pub center: (f32, f32),
+}
+
+/// How a mark is drawn now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Stage {
+    Hidden,
+    /// Growing (or shrinking back from a little more than its size, 0 to about 1.1).
+    Scale(f32),
+    Shown,
+}
+
+impl Stage {
+    /// The stage of `mark` `t` seconds after the loading reached it (negative: not yet): popping
+    /// in over 0.35 s with a little overshoot, or two flashes of 0.14 s.
+    pub fn of(mark: &Mark, t: Option<f32>) -> Stage {
+        let Some(t) = t.map(|t| t - mark.delay) else { return Stage::Hidden };
+        if t < 0.0 {
+            return Stage::Hidden;
+        }
+        if mark.blink {
+            return if t < 0.56 && t % 0.28 < 0.14 { Stage::Shown } else { Stage::Hidden };
+        }
+        const POP: f32 = 0.35;
+        if t >= POP {
+            return Stage::Shown;
+        }
+        // (ease out with a little overshoot, as a bubble that pops up)
+        let x = t / POP - 1.0;
+        let (c1, c3) = (1.70158f32, 2.70158f32);
+        Stage::Scale((1.0 + c3 * x * x * x + c1 * x * x).max(0.0))
+    }
+}
+
+/// The marks of an SVG (`data-at`), in the order they stand in it.
+pub fn marks(src: &str) -> Vec<Mark> {
+    let Ok(tree) = resvg::usvg::Tree::from_str(src, &resvg::usvg::Options::default()) else { return Vec::new() };
+    let attr = |tag: &str, name: &str| -> Option<String> {
+        let k = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+        Some(tag[k..k + tag[k..].find('"')?].to_string())
+    };
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(k) = src[from..].find("data-at=\"") {
+        let at_attr = from + k;
+        from = at_attr + 9;
+        let Some(open) = src[..at_attr].rfind('<') else { continue };
+        let Some(end) = src[at_attr..].find('>') else { continue };
+        let tag = &src[open..at_attr + end];
+        let (Some(id), Some(at)) = (attr(tag, "id"), attr(tag, "data-at").and_then(|a| a.parse::<f32>().ok())) else { continue };
+        let Some(node) = tree.node_by_id(&id) else { continue };
+        let b = node.abs_bounding_box();
+        out.push(Mark {
+            id,
+            at: at.clamp(0.0, 1.0),
+            delay: attr(tag, "data-delay").and_then(|d| d.parse::<f32>().ok()).unwrap_or(0.0).clamp(0.0, 10.0),
+            blink: attr(tag, "data-blink").is_some(),
+            center: (b.x() + b.width() * 0.5, b.y() + b.height() * 0.5),
+        });
+    }
+    out
+}
+
+/// Where the element `id` lies in `src`: from its `<` to the end of its closing tag.
+fn element_span(src: &str, id: &str) -> Option<(usize, usize)> {
+    let at = src.find(&format!(" id=\"{id}\""))?;
+    let open = src[..at].rfind('<')?;
+    let name: String = src[open + 1..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == ':').collect();
+    let gt = at + src[at..].find('>')?;
+    if src[..gt].ends_with('/') {
+        return Some((open, gt + 1));
+    }
+    // (the same element nested inside it: counted)
+    let (opening, closing) = (format!("<{name}"), format!("</{name}>"));
+    let (mut depth, mut i) = (1, gt + 1);
+    while depth > 0 {
+        let next_close = i + src[i..].find(&closing)?;
+        let next_open = src[i..next_close].match_indices(&opening).map(|(k, _)| i + k).find(|&k| src[k + opening.len()..].starts_with([' ', '>', '/']));
+        match next_open {
+            Some(k) => {
+                let tag_end = k + src[k..].find('>')?;
+                if !src[..tag_end].ends_with('/') {
+                    depth += 1;
+                }
+                i = tag_end + 1;
+            }
+            None => {
+                depth -= 1;
+                i = next_close + closing.len();
+            }
+        }
+    }
+    Some((open, i))
+}
+
+/// The SVG `src` with its marks drawn as `stage` says: hidden, growing from their middle, or as
+/// they are.
+pub fn staged_svg(src: &str, marks: &[Mark], stage: impl Fn(&Mark) -> Stage) -> String {
+    let mut out = src.to_string();
+    for m in marks {
+        let wrap = match stage(m) {
+            Stage::Shown => continue,
+            Stage::Hidden => "<g opacity=\"0\">".to_string(),
+            Stage::Scale(s) => {
+                let (cx, cy) = m.center;
+                format!("<g transform=\"translate({cx:.2} {cy:.2}) scale({s:.3}) translate({:.2} {:.2})\">", -cx, -cy)
+            }
+        };
+        if let Some((a, b)) = element_span(&out, &m.id) {
+            out = format!("{}{wrap}{}</g>{}", &out[..a], &out[a..b], &out[b..]);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    /// A logo whose stops come in as the loading reaches them, and a light that flashes.
+    #[test]
+    fn marks_come_in_when_the_loading_reaches_them() {
+        let src = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><g id="stop" data-at="0.5" transform="translate(10 0)"><circle cx="90" cy="50" r="20" fill="#fff"/><g><rect x="85" y="45" width="10" height="10" fill="#f00"/></g></g><circle id="lamp" data-at="0.2" data-delay="0.35" data-blink="" cx="20" cy="20" r="5" fill="#ff0"/></svg>"##;
+        let m = super::marks(src);
+        assert_eq!(m.len(), 2);
+        assert_eq!((m[0].id.as_str(), m[0].at, m[0].blink, m[0].center), ("stop", 0.5, false, (100.0, 50.0)));
+        assert_eq!((m[1].id.as_str(), m[1].delay, m[1].blink), ("lamp", 0.35, true));
+        // popping in: from nothing, a little over its size, then as it is
+        use super::Stage;
+        assert_eq!(Stage::of(&m[0], None), Stage::Hidden);
+        assert_eq!(Stage::of(&m[0], Some(0.0)), Stage::Scale(0.0));
+        let Stage::Scale(over) = Stage::of(&m[0], Some(0.25)) else { panic!() };
+        assert!(over > 1.0 && over < 1.15, "{over}");
+        assert_eq!(Stage::of(&m[0], Some(1.0)), Stage::Shown);
+        // the light: after its delay, two flashes, then dark
+        let lamp = |t: f32| Stage::of(&m[1], Some(t));
+        assert_eq!([lamp(0.1), lamp(0.4), lamp(0.55), lamp(0.68), lamp(0.83), lamp(2.0)], [Stage::Hidden, Stage::Shown, Stage::Hidden, Stage::Shown, Stage::Hidden, Stage::Hidden]);
+        // drawn: the whole group hidden or grown, nested groups and all
+        let ink = |svg: &str| super::rasterize_rgba(svg, 200, 100).unwrap().chunks(4).filter(|p| p[3] > 128).count();
+        let all = ink(&super::staged_svg(src, &m, |_| Stage::Shown));
+        let none = ink(&super::staged_svg(src, &m, |_| Stage::Hidden));
+        let half = ink(&super::staged_svg(src, &m, |_| Stage::Scale(0.5)));
+        assert_eq!(none, 0);
+        assert!(half > all / 6 && half < all / 3, "{half} of {all}");
+        assert!(super::staged_svg(src, &m, |_| Stage::Hidden).matches("</g>").count() == 4);
+    }
+
     /// A ring round a box and a line under a word, as a logo has it: its length, and drawn
     /// along a part of it.
     const LOGO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200"><rect x="60" y="60" width="80" height="80" fill="#222"/><path id="progress" d="M100 20 A80 80 0 1 0 180 100 L380 100" fill="none" stroke="#2a75f7" stroke-width="16" stroke-linecap="round"/></svg>"##;

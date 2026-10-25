@@ -457,6 +457,9 @@ pub struct Ui {
     hud: hud::Hud,
     grips: [Option<([f32; 4], f32, f32)>; 3],
     caps: [f32; 3],
+    /// When the loading reached each mark of a theme's loading logo (by the loading screen's
+    /// clock): they pop in from then (`omsi_ui::icons::Stage`).
+    logo_marks: hashbrown::HashMap<String, f32>,
 }
 
 impl Ui {
@@ -514,7 +517,7 @@ impl Ui {
         }
     }
     pub fn new() -> Option<Ui> {
-        Some(Ui { origin_x: 0.0, text: TextCache::new()?, chat: ChatWidget::default(), menu_rects: Vec::new(), menu_arrows: Vec::new(), menu_scroll_thumb: None, menu_scroll_track: None, menu_ctl: Vec::new(), dd_rects: Vec::new(), dd_top: 0, dd_rows: 8, dd_scroll: None, menu_side: Vec::new(), menu_pane: Vec::new(), menu_pane_start: 0, menu_pane_go: None, menu_pane_box: None, menu_pane_scroll: None, menu_time: Vec::new(), anim: Default::default(), anim_dt: 0.0, menu_overlay_range: 0..0, vr_cursor_overlay: None, vr_tooltip_overlay: None, menu_start: 0, menu_rows: 0, menu_row_h: 1.0, images: Default::default(), info_rect: None, perf: Default::default(), mz: Default::default(), hud: hud::Hud::new(false), grips: [None; 3], caps: [f32::MAX; 3] })
+        Some(Ui { origin_x: 0.0, text: TextCache::new()?, chat: ChatWidget::default(), menu_rects: Vec::new(), menu_arrows: Vec::new(), menu_scroll_thumb: None, menu_scroll_track: None, menu_ctl: Vec::new(), dd_rects: Vec::new(), dd_top: 0, dd_rows: 8, dd_scroll: None, menu_side: Vec::new(), menu_pane: Vec::new(), menu_pane_start: 0, menu_pane_go: None, menu_pane_box: None, menu_pane_scroll: None, menu_time: Vec::new(), anim: Default::default(), anim_dt: 0.0, menu_overlay_range: 0..0, vr_cursor_overlay: None, vr_tooltip_overlay: None, menu_start: 0, menu_rows: 0, menu_row_h: 1.0, images: Default::default(), info_rect: None, perf: Default::default(), mz: Default::default(), hud: hud::Hud::new(false), grips: [None; 3], caps: [f32::MAX; 3], logo_marks: Default::default() })
     }
 
     /// Draw the frame's interface: its overlays go after the HUD's in `scene.overlays`.
@@ -1242,6 +1245,8 @@ struct LoadingLook {
     stripes: ([u8; 3], [u8; 3]),
 }
 
+use omsi_ui::icons::Stage;
+
 impl LoadingLook {
     fn of(theme: Option<&crate::themes::Theme>) -> LoadingLook {
         let rgb = |c: omsi_ui::Color| {
@@ -1303,8 +1308,24 @@ impl Ui {
                 // every frame)
                 let bar = mode != crate::themes::Progress::Bar;
                 let q = if bar { (p * 100.0).round() / 100.0 } else { 1.0 };
-                let key = (format!("\u{0}theme-logo {id} {mode:?} {q}"), lw, [255, 255, 255, ka]);
-                let tex = self.text.cached(r, scene, key, (lw, lh), || fade(l.pixels(lw, lh, bar.then_some((mode, q))).unwrap_or_else(|| vec![0; (lw * lh * 4) as usize])));
+                // its marks pop in as the loading reaches them (in twentieths of their size: a
+                // new picture of the logo a few times a pop)
+                let marks = l.marks();
+                self.logo_marks.retain(|m, _| marks.iter().any(|k| k.id == *m && p >= k.at));
+                for m in marks.iter().filter(|m| p >= m.at) {
+                    self.logo_marks.entry(m.id.clone()).or_insert(clock);
+                }
+                let stages: Vec<Stage> = marks
+                    .iter()
+                    .map(|m| match Stage::of(m, self.logo_marks.get(&m.id).map(|t| clock - t)) {
+                        Stage::Scale(x) => Stage::Scale((x * 20.0).round() / 20.0),
+                        s => s,
+                    })
+                    .collect();
+                let staged: String = stages.iter().map(|s| match s { Stage::Hidden => "h".to_string(), Stage::Shown => "s".to_string(), Stage::Scale(x) => format!("{x}") }).collect::<Vec<_>>().join(",");
+                let key = (format!("\u{0}theme-logo {id} {mode:?} {q} {staged}"), lw, [255, 255, 255, ka]);
+                let stage = |m: &omsi_ui::icons::Mark| marks.iter().position(|k| k.id == m.id).map_or(Stage::Shown, |i| stages[i]);
+                let tex = self.text.cached(r, scene, key, (lw, lh), || fade(l.pixels(lw, lh, bar.then_some((mode, q)), &stage).unwrap_or_else(|| vec![0; (lw * lh * 4) as usize])));
                 (tex, lw, lh, bar)
             }
             None => {

@@ -16,7 +16,8 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
   glass over the game's picture (blurred when the menu opens, and every second and a half while
   the game goes on behind it); the logo and the name at the top of the pause menu; and the
   loading screen's colours and logo, which can itself be the loading bar - its path
-  `id="progress"` drawn along, or the logo filled from the left, as far as the loading is.
+  `id="progress"` drawn along, or the logo filled from the left, as far as the loading is - and
+  parts of the logo marked `data-at` pop up (or, `data-blink`, flash) as the loading reaches them.
   openOMSI's own look is unchanged and stays the default. Plugins see the themes with
   `ui.themes` and `ui.theme` and can switch to one with `ui.set_theme` (`omsi.ui.version` 6).
 - **LAN protocol 15**: a game of this version cannot join a session of an older one, nor the

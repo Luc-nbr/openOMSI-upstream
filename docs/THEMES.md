@@ -81,6 +81,19 @@ TGA, BMP, JPEG, DDS; 4096 pixels at most). Nothing outside the folder is read.
 
 A logo without a path `progress` is filled instead of stroked.
 
+**Things that come in.** An element at the top level of an SVG loading logo with an `id` and
+`data-at="0.4"` stays hidden until the loading is that far (0 to 1, along the path `progress`
+when the logo is stroked), then pops up from its middle with a little overshoot. With
+`data-blink` it flashes twice instead (a light), and `data-delay="0.4"` waits that many seconds
+after the loading reached it:
+
+```svg
+<path id="progress" d="M485 362 A167 167 0 1 0 334 459 L1673 459" stroke="#2a75f7" .../>
+<path id="bus" data-at="0.33" d="..."/>
+<g id="lights" data-at="0.33" data-delay="0.4" data-blink=""><circle .../></g>
+<g id="stop-1" data-at="0.41"><circle cx="428" cy="459" r="61" .../></g>
+```
+
 ## Glass
 
 With `glass`, the pause menu's rail, its cards and panels, and the settings windows are panes

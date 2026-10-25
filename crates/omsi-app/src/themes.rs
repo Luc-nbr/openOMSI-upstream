@@ -10,6 +10,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use omsi_ui::icons::{Mark, Stage};
 use omsi_ui::theme::{self, Glass, Palette};
 use omsi_ui::Color;
 
@@ -34,11 +35,11 @@ pub(crate) enum Progress {
     Fill,
 }
 
-/// A logo of a theme: an SVG (its source, its size and the length of its path `progress`
-/// when it has one) or a picture.
+/// A logo of a theme: an SVG (its source, its size, the length of its path `progress` when it
+/// has one, and its marks: what comes in as the loading reaches it) or a picture.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Logo {
-    Svg { src: String, size: (f32, f32), progress_len: Option<f32> },
+    Svg { src: String, size: (f32, f32), progress_len: Option<f32>, marks: Vec<Mark> },
     Picture { w: u32, h: u32, rgba: Arc<Vec<u8>> },
 }
 
@@ -56,7 +57,7 @@ impl Logo {
     pub fn square_pixels(&self, n: u32) -> Option<Vec<u8>> {
         let a = self.aspect();
         let (w, h) = if a >= 1.0 { (n, ((n as f32 / a).round() as u32).max(1)) } else { (((n as f32 * a).round() as u32).max(1), n) };
-        let px = self.pixels(w, h, None)?;
+        let px = self.pixels(w, h, None, &|_| Stage::Shown)?;
         let (x0, y0) = ((n - w) / 2, (n - h) / 2);
         let mut out = vec![0u8; (n * n * 4) as usize];
         for y in 0..h {
@@ -67,14 +68,23 @@ impl Logo {
         Some(out)
     }
 
+    /// The marks of an SVG logo (`data-at`: what comes in as the loading reaches it).
+    pub fn marks(&self) -> &[Mark] {
+        match self {
+            Logo::Svg { marks, .. } => marks,
+            Logo::Picture { .. } => &[],
+        }
+    }
+
     /// Its pixels at `w` x `h` (straight RGBA) - with the loading's progress `frac` shown as
-    /// `progress` has it (none: the whole logo).
-    pub fn pixels(&self, w: u32, h: u32, progress: Option<(Progress, f32)>) -> Option<Vec<u8>> {
-        if let (Logo::Svg { src, progress_len: Some(len), .. }, Some((Progress::Stroke, frac))) = (self, progress) {
-            return omsi_ui::icons::rasterize_rgba(&omsi_ui::icons::progress_svg(src, "progress", *len, frac, TRACK), w, h);
+    /// `progress` has it (none: the whole logo), its marks as `stage` has them.
+    pub fn pixels(&self, w: u32, h: u32, progress: Option<(Progress, f32)>, stage: &dyn Fn(&Mark) -> Stage) -> Option<Vec<u8>> {
+        let staged = |src: &str, marks: &[Mark]| if marks.is_empty() { src.to_string() } else { omsi_ui::icons::staged_svg(src, marks, stage) };
+        if let (Logo::Svg { src, progress_len: Some(len), marks, .. }, Some((Progress::Stroke, frac))) = (self, progress) {
+            return omsi_ui::icons::rasterize_rgba(&omsi_ui::icons::progress_svg(&staged(src, marks), "progress", *len, frac, TRACK), w, h);
         }
         let mut px = match self {
-            Logo::Svg { src, .. } => omsi_ui::icons::rasterize_rgba(src, w, h)?,
+            Logo::Svg { src, marks, .. } => omsi_ui::icons::rasterize_rgba(&staged(src, marks), w, h)?,
             Logo::Picture { w: pw, h: ph, rgba } => {
                 let img = image::RgbaImage::from_raw(*pw, *ph, rgba.to_vec())?;
                 image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle).into_raw()
@@ -233,7 +243,8 @@ fn read_logo(dir: &Path, file: &str) -> Result<Logo, String> {
         let src = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
         let size = omsi_ui::icons::svg_size(&src).filter(|s| s.0 > 0.0 && s.1 > 0.0).ok_or(format!("{file}: not an SVG that can be drawn"))?;
         let progress_len = omsi_ui::icons::path_length(&src, "progress");
-        return Ok(Logo::Svg { src, size, progress_len });
+        let marks = omsi_ui::icons::marks(&src);
+        return Ok(Logo::Svg { src, size, progress_len, marks });
     }
     let img = omsi_texture::decode_file(&path).map_err(|e| format!("{file}: {e}"))?;
     if img.width == 0 || img.height == 0 || img.width > 4096 || img.height > 4096 {
@@ -456,12 +467,12 @@ mod tests {
         let logo = t.loading.logo.as_ref().unwrap();
         assert_eq!(logo.aspect(), 2.0);
         // the loading bar: drawn along the path as far as the loading is
-        let half = logo.pixels(200, 100, Some((Progress::Stroke, 0.5))).unwrap();
-        let whole = logo.pixels(200, 100, None).unwrap();
+        let half = logo.pixels(200, 100, Some((Progress::Stroke, 0.5)), &|_| Stage::Shown).unwrap();
+        let whole = logo.pixels(200, 100, None, &|_| Stage::Shown).unwrap();
         let ink = |px: &[u8]| px.chunks(4).filter(|p| p[3] > 128).count();
         assert!(ink(&half) > ink(&whole) / 4 && ink(&half) < ink(&whole), "{} of {}", ink(&half), ink(&whole));
         // filled from the left: the right half faint
-        let fill = logo.pixels(200, 100, Some((Progress::Fill, 0.5))).unwrap();
+        let fill = logo.pixels(200, 100, Some((Progress::Fill, 0.5)), &|_| Stage::Shown).unwrap();
         assert!(fill.chunks(4).enumerate().filter(|(i, _)| i % 200 >= 100).all(|(_, p)| p[3] <= 50));
         assert!(t.logo.is_some());
     }
