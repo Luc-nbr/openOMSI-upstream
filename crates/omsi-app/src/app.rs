@@ -582,6 +582,7 @@ impl App {
                     n.show_surface = self.settings.nav_surface;
                     n.light = self.settings.nav_light;
                     n.show_3d = self.settings.nav_3d;
+                    n.classic_2d = self.settings.nav_classic_2d;
                     n.widget = self.settings.nav_widget;
                     n.size = self.settings.nav_size;
                 }
@@ -833,7 +834,7 @@ impl App {
     /// One loading screen picture (the map, or our bus going to the server): `title`, bar at `shown`.
     fn loading_frame(&mut self, renderer: omsi_render::Renderer, mut scene: Scene, title: &str, shown: f32) {
         let mut reconfigure = false;
-        crate::themes::sync(&self.settings.ui_theme);
+        crate::themes::sync(&self.settings.ui_theme_pack);
         if let (Some(ui), Some(s), Some(win)) = (
             self.ui.as_mut(),
             self.gfx.surface.as_ref(),

@@ -59,10 +59,10 @@ impl App {
             let mut ui = plugins.ui.borrow_mut();
             if ui.themes().is_empty() {
                 let list = crate::themes::choices().iter().map(|(id, name)| omsi_plugin::ui::ThemeInfo { id: id.clone(), name: name.clone() }).collect();
-                ui.set_themes(list, &self.settings.ui_theme);
-            } else if ui.theme() != self.settings.ui_theme {
+                ui.set_themes(list, &self.settings.ui_theme_pack);
+            } else if ui.theme() != self.settings.ui_theme_pack {
                 let list = ui.themes().to_vec();
-                ui.set_themes(list, &self.settings.ui_theme);
+                ui.set_themes(list, &self.settings.ui_theme_pack);
             }
         }
         if !plugins.is_empty() && !self.paused {
@@ -116,10 +116,10 @@ impl App {
         // chosen in Options › Interface
         let theme_ask = plugins.ui.borrow_mut().take_theme_ask();
         self.integrations.plugins = Some(plugins);
-        if let Some(id) = theme_ask.filter(|id| *id != self.settings.ui_theme) {
+        if let Some(id) = theme_ask.filter(|id| *id != self.settings.ui_theme_pack) {
             log::info!("plugins: the interface theme \"{id}\" asked for");
             let value = if id.is_empty() { crate::themes::OWN.to_string() } else { id };
-            crate::game_lists::store_with(self, |v| v["ui_theme"] = serde_json::json!(value));
+            crate::game_lists::store_with(self, |v| v["ui_theme_pack"] = serde_json::json!(value));
         }
         // OMSI_WATCH_VARS=a,b: every change of those variables of the player's bus
         if let (Some(p), Some(list)) = (self.player.as_ref(), omsi_cfg::flags::OMSI_WATCH_VARS.var()) {

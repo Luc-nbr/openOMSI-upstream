@@ -17,6 +17,8 @@ mod menu;
 pub use menu::{MenuItem, MAX_MENU_ITEMS, MAX_MENU_LABEL};
 mod theme;
 pub use theme::ThemeInfo;
+mod dock;
+pub use dock::Dock;
 
 /// `omsi.ui.version`: raised when something is added a plugin may want to test for.
 /// 2: images, checkboxes, sliders, text fields, tabs, charts, tables, draggable panels.
@@ -363,22 +365,6 @@ pub struct UiState {
     theme_ask: Option<String>,
 }
 
-/// The navigator's board as the plugins see it (`ui.dock`), in the panel's pixels.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Dock {
-    pub width: f32,
-    /// The most height there is room for.
-    pub room: f32,
-    /// The height the panel in it came to (more than `room`: it is cut off there; 0 before
-    /// it is laid out).
-    pub height: f32,
-    /// The plugin whose panel is in it.
-    pub owner: Option<u64>,
-    /// It is the navigator's whole frame (a panel with `frame = true` is in it), not the board
-    /// under its map.
-    pub frame: bool,
-}
-
 impl Default for UiState {
     fn default() -> Self {
         // (until the game has drawn a frame: a 1080p screen)
@@ -551,17 +537,6 @@ impl UiState {
     /// `omsi.ui.screen()`: logical width, height, and the interface's scale.
     pub fn screen(&self) -> [f32; 3] {
         self.screen
-    }
-
-    /// The game says where the navigator's board is and whose panel is in it, or that it
-    /// shows none.
-    pub fn set_dock(&mut self, dock: Option<Dock>) {
-        self.dock = dock;
-    }
-
-    /// `omsi.ui.dock()`: the navigator's board, None while it shows none.
-    pub fn dock(&self) -> Option<Dock> {
-        self.dock
     }
 
     pub fn panels(&self) -> &[PanelEntry] {

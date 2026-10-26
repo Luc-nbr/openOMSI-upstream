@@ -8,13 +8,34 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 
 ### New
 
-- **Choose where openOMSI keeps its data** (Setup › `.openomsi` folder): settings, profiles,
-  logs and caches can live in another folder, on another disk. A game and its launcher find the
-  folder through a pointer file beside the program (beside the `.app` on a Mac, so an update of
-  the bundle keeps it); a first start, or an installation that cannot be written, uses `~/.openomsi`
-  as before. Moving copies the folder first, in the background (leaving the page does not stop it),
-  and switches only when the copy is whole; a copy that fails leaves the old folder as it was. The
-  default `~/.openomsi` is kept after a move, because other copies of openOMSI may still use it.
+- **Enhanced has options of its own, and the quality presets cross the modes.** Enhanced+ is no
+  longer a mode: it is Enhanced with *Real-Time Ray Tracing* switched on (`ray_tracing=1`; a
+  `graphics=enhanced_plus` file reads as that, and `--enhanced-plus` still asks for it for a run).
+  Graphics has *Light has shadows* (`light_shadows`: Off, Street lamps and vehicles, Every light),
+  *Cloud shadows and light shafts* (`cloud_shadows`), *Glow of lights* (`light_glow`),
+  *Real-Time Reflections* (the puddles' setting, now with the wet roads' and the water's) and
+  *Reflective objects reflect* (the reflection maps), next to the street light and the mirrors. The
+  presets are Low, Medium, High, Extra, Max and Ultra, and each sets the mode too: Low is Vanilla,
+  Medium Vanilla+ (what the game starts with), High to Max Enhanced with more switched on at each
+  step, Ultra Enhanced with ray tracing and everything on. The launcher, the game's options, the
+  Apple app and the quality optimiser follow it; every new text is translated into all the
+  languages.
+- **The clouds' shadow lies over the land** (Enhanced): the sun is no longer one number for the
+  whole picture. A field of nine kilometres, worked out from the very heaps the sky shows and kept
+  in the sky table's texture, makes patches of sun and shade on the ground that the wind moves, and
+  the air scatters the sun's shafts through the gaps of a broken sky as far as seven kilometres.
+- **Lights shine and cast shadows in every direction** (Enhanced, *Light has shadows: Every
+  light*): a spot that is no headlamp gets a map along its own axis, the two strongest lamps that
+  shine every way a cube map of six tiles (fifty-six lamp tiles now), and a lamp in the dark has a
+  glare round it that falls as the cube of the distance and a halo in the night air (*Glow of
+  lights*).
+- **Wet roads and water mirror the street** (Enhanced): the sheen of a wet road and still water
+  trace what stands round them in screen space at their Fresnel share, not only the pools - the
+  lit windows and lamps of a street stream down a wet road at night.
+- **A flashlight (Alt+F)**: a hand lamp held beside the eye that shines where the view looks, a
+  warm white cone reaching 50 m with a soft edge, in the Vanilla and the Enhanced pictures, in
+  every view, by night in the dark or by day inside a dim cab. `flashlight` in keyboard.cfg's
+  `[game]` (or a controller button) switches it as well.
 - **A modern engine for HTML screens (opt-in)**: a page that puts
   `<meta name="omsi-engine" content="modern">` in its head runs on a second engine with flexbox,
   `position` with `z-index`, borders, `calc()` and custom properties, attribute selectors,
@@ -111,7 +132,7 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
   itself reads), a group or a line can be reset on its own, and *Reset the map* deletes them, which
   gives the map's defaults back. Translated into every language of the launcher.
 - **Interface themes**: a mod or a plugin can give the game's own screens a look of their own,
-  chosen in Options › Interface › Interface theme ([docs/THEMES.md](docs/THEMES.md)). A theme is a
+  chosen in Options › Interface › Theme pack ([docs/THEMES.md](docs/THEMES.md)). A theme is a
   folder with a `theme.json` (`Themes/<id>/` of a content folder, or a plugin's own folder): the
   colours of the pause menu, its settings windows and lists, the photo mode, the developer tools
   and the plugins' panels and notifications; the corners of the panels; the panels as frosted
@@ -480,6 +501,17 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 
 ### Fixes
 
+- **The launcher starts as it did in 0.3.41.** 0.3.42 made the launcher write a pointer file beside its
+  program and copy data folders at start, and some antivirus programs and browsers took that for
+  harmful behaviour and blocked the download or the program. That change (the data folder choice
+  in Setup, #3243) is taken out again, so the launcher keeps its data in `~/.openomsi` as before;
+  it can return later in a form that leaves the program folder alone. Players who were blocked
+  can update to this version.
+
+- **The navigator's map and the city map draw the whole ground again** (#3266, #3301): the cap on
+  the map's geometry that came in with the out-of-memory fix (#3249) cut the ground off on large
+  maps, so the in-game map showed street names over an empty background. The cap is gone from the
+  panel and the city map; #3249 is open again for another fix.
 - **The launcher's bus preview shows what the repaint chooses**: the showroom gives the bus
   its paint scheme as the game does, so the scheme's `[setvar]`s are set again after the
   scripts every frame (#3183). Set once when the bus was made, a script that writes them
@@ -501,6 +533,19 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
   junction). The standing car now drives on after a few seconds. And a route's lane change that
   the bus missed its window for (the two lanes no longer run side by side) is made all the same
   after 12 s of waiting instead of never. `OMSI_DEBUG_STUCK` also says why a lane change waits.
+- **On foot, the player walks wherever the passengers' paths lead**: a staircase, a ramp, a gate
+  through a fence or a doorway the map gives the AI passengers is now walkable by hand too, at
+  the path's height (the step and slope limits and the walls no longer stop the walker on a
+  people's path), instead of only where the ground happens to allow it.
+- **The people boarding a timetable bus walk in to their seats**: in any bus but the player's they
+  stood in their seats the moment they stepped through the door, a jump in the saloon of every bus
+  that passed a stop. They now walk along the bus's own paths to the place reserved, as in the
+  player's bus (a bus without paths to the place keeps the jump).
+- **Timetable buses no longer stand at the stops that have no time of their own**: a bus that came to
+  such a stop early waited for the timetable's estimate (the running time shared out by distance)
+  up to two minutes, so a third of the buses stood over a minute with nobody getting on or off. They
+  now wait the length of a boarding at the most; the stops the timetable gives a time, the first and
+  the last stop keep their wait. `OMSI_DEBUG_STOPS` also logs how long each bus stood and why.
 - **The launcher's bus preview is no longer misted over**: the bus is made for it (the
   showroom and `--export-glb`) on a mild day (22 °C) instead of at 0 °C, the temperature a
   vehicle starts at without a weather. The

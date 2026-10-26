@@ -143,6 +143,9 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
                 let before = app.settings.mirror_hud;
                 remember_setting(key, value);
                 reload_settings(app);
+                if key == "light_shadows" && value == "all" && app.renderer.as_ref().is_some_and(|r| !r.lamp_cube_maps()) {
+                    app.service_msg = Some((omsi_ui::tr("Takes effect when the game starts the next time").into_owned(), 5.0));
+                }
                 if key == "mirror_hud" && app.settings.mirror_hud != before {
                     if let Some(p) = app.player.as_ref() {
                         app.gfx.mirror_hud.apply_setting(p, app.settings.mirror_hud);
@@ -157,9 +160,9 @@ pub(crate) fn dropdown_apply(app: &mut App, action: &str) {
             }
         }
         "preset" => {
-            if let Some(i) = arg.trim().parse::<usize>().ok().filter(|i| *i < 4) {
+            if let Some(i) = arg.trim().parse::<usize>().ok().filter(|i| *i < 6) {
                 store_with(app, |v| {
-                    // (the preset of the mode the file has: it keeps the mode)
+                    // (a preset sets the mode as well)
                     let Some(p) = presets(v).into_iter().nth(i) else { return };
                     if let Some(o) = p.1.as_object() {
                         for (k, x) in o {
@@ -265,7 +268,8 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
         "rain_quality" => vec![("high", "High"), ("medium", "Medium"), ("low", "Low")],
         "vehicle_smoke" => vec![("all", "All vehicles"), ("player", "Player only"), ("off", "Off")],
         "puddles" => vec![("high", "High"), ("low", "Low"), ("off", "Off")],
-        "graphics" => vec![("vanilla", "Vanilla (as OMSI 2)"), ("vanilla_plus", "Vanilla+"), ("enhanced", "Enhanced"), ("enhanced_plus", "Enhanced+")],
+        "graphics" => vec![("vanilla", "Vanilla (as OMSI 2)"), ("vanilla_plus", "Vanilla+"), ("enhanced", "Enhanced")],
+        "light_shadows" => vec![("off", "Off"), ("street", "Street lamps and vehicles"), ("all", "Every light")],
         "msaa" => vec![("1", "Off"), ("2", "2x MSAA"), ("4", "4x MSAA"), ("8", "8x MSAA")],
         "render_scale" => vec![("auto", "Auto"), ("1", "100%"), ("0.85", "85%"), ("0.75", "75%"), ("0.67", "67%"), ("0.5", "50%")],
         "upscaler" => vec![("default", "Standard (Catmull-Rom)"), ("fsr1", "AMD FSR 1 (experimental)")],
@@ -299,7 +303,7 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
         "ai_max_humans" => vec![("50", "50"), ("100", "100"), ("200", "200"), ("400", "400"), ("720", "720"), ("1000", "1000")],
         "language" => omsi_launcher_lib::LANGUAGES.iter().map(|l| (l.0, l.1)).collect(),
         // (openOMSI's own look as "openomsi": the setting reads it as "")
-        "ui_theme" => crate::themes::choices().iter().map(|(id, name)| (if id.is_empty() { crate::themes::OWN } else { id.as_str() }, name.as_str())).collect(),
+        "ui_theme_pack" => crate::themes::choices().iter().map(|(id, name)| (if id.is_empty() { crate::themes::OWN } else { id.as_str() }, name.as_str())).collect(),
         "vr_scale" => vec![("0.5", "50%"), ("0.65", "65%"), ("0.8", "80%"), ("1", "100%")],
         "vr_head_smoothing_ms" => vec![("0", "Off"), ("5", "5 ms"), ("10", "10 ms"), ("20", "20 ms"), ("30", "30 ms")],
         "vr_mirror_rate" => vec![("0", "Off"), ("8", "8/s"), ("16", "16/s"), ("24", "24/s"), ("32", "32/s"), ("48", "48/s"), ("60", "60/s"), ("90", "90/s"), ("120", "120/s"), ("180", "180/s"), ("240", "240/s"), ("360", "360/s"), ("-1", "Every frame")],
@@ -323,10 +327,10 @@ pub(super) fn select_row(file: &serde_json::Value, key: &str, name: &str, desc: 
     Some((row(name, 'o', &label, desc, None), format!("sel {key}")))
 }
 
-/// The quality presets for the graphics mode of `file` (`graphics_presets_for`, as the
-/// launcher's): they keep the mode.
-pub(super) fn presets(file: &serde_json::Value) -> [(&'static str, serde_json::Value); 4] {
-    omsi_launcher_lib::graphics_presets_for(file.get("graphics").and_then(|v| v.as_str()).unwrap_or("vanilla_plus"))
+/// The quality presets (`graphics_presets`, as the launcher's): Low to Ultra, each with its
+/// graphics mode.
+pub(super) fn presets(_file: &serde_json::Value) -> [(&'static str, serde_json::Value); 6] {
+    omsi_launcher_lib::graphics_presets()
 }
 
 pub(super) fn preset_now(file: &serde_json::Value) -> Option<usize> {
@@ -367,7 +371,7 @@ pub(super) fn reload_settings(app: &mut App) {
 }
 
 pub(crate) fn session_mode(app: &App) -> &'static str {
-    mode_of_session(&app.args.session_settings, &app.settings.graphics)
+    mode_of_session(&app.args.session_settings, app.settings.mode())
 }
 
 pub(super) fn mode_of_session(session: &crate::startup::SessionSettings, graphics: &str) -> &'static str {
@@ -385,7 +389,7 @@ pub(super) fn mode_of_session(session: &crate::startup::SessionSettings, graphic
 
 fn settings_in_mode(mode: &str) -> crate::settings::Settings {
     let s = crate::settings::Settings::load();
-    if s.graphics == mode {
+    if s.mode() == mode {
         return s;
     }
     let text = crate::settings::Settings::path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
@@ -397,7 +401,13 @@ fn settings_in_mode(mode: &str) -> crate::settings::Settings {
 }
 
 pub(super) fn text_in_mode(text: &str, mode: &str) -> crate::settings::Settings {
-    crate::settings::Settings::from_text(&format!("{text}\ngraphics={mode}\n"))
+    // (the mode as the file spells it: Enhanced and ray tracing apart)
+    let (graphics, rt) = match mode {
+        "enhanced_plus" => ("enhanced", "1"),
+        "enhanced" => ("enhanced", "0"),
+        other => (other, "0"),
+    };
+    crate::settings::Settings::from_text(&format!("{text}\ngraphics={graphics}\nray_tracing={rt}\n"))
 }
 
 pub(super) fn sync_live(app: &mut App) {
@@ -413,9 +423,13 @@ pub(super) fn sync_live(app: &mut App) {
         }
     }
     // (the street light takes effect at once: the renderer reads it every frame)
-    let street_light = app.settings.render_options().street_light;
+    let live = app.settings.render_options();
     if let Some(r) = app.renderer.as_mut() {
-        r.options.street_light = street_light;
+        r.options.street_light = live.street_light;
+        // (so do the lights' shadows, the clouds' and the glow: read every frame)
+        r.options.light_shadows = live.light_shadows;
+        r.options.cloud_shadows = live.cloud_shadows;
+        r.options.light_glow = live.light_glow;
     }
     let s = &app.settings;
     if let Some(w) = app.world.as_ref() {

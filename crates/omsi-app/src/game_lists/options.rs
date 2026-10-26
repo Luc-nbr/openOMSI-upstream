@@ -389,6 +389,7 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "nav_surface" => app.menus.navigator.as_ref().map_or(s.nav_surface, |n| n.show_surface),
         "nav_light" => app.menus.navigator.as_ref().map_or(s.nav_light, |n| n.light),
         "nav_3d" => app.menus.navigator.as_ref().map_or(s.nav_3d, |n| n.show_3d),
+        "nav_classic_2d" => app.menus.navigator.as_ref().map_or(s.nav_classic_2d, |n| n.classic_2d),
         "nav_widget" => app.menus.navigator.as_ref().map_or(s.nav_widget, |n| n.widget),
         "milezero" => s.milezero,
         "shadows" => s.shadows,
@@ -436,6 +437,9 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "ssao" => s.ssao,
         "detail_textures" => s.detail_textures,
         "clouds" => s.clouds,
+        "ray_tracing" => s.ray_tracing_on,
+        "cloud_shadows" => s.cloud_shadows,
+        "light_glow" => s.light_glow,
         "windy_trees" => s.windy_trees,
         "mirror_hud_every_frame" => s.mirror_hud_every_frame,
         "mirror_shadows" => s.mirror_shadows,
@@ -512,6 +516,13 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
             }
             app.settings.nav_light = on;
             Some(("nav_light", bit))
+        }
+        "nav_classic_2d" => {
+            if let Some(n) = app.menus.navigator.as_mut() {
+                n.classic_2d = on;
+            }
+            app.settings.nav_classic_2d = on;
+            Some(("nav_classic_2d", bit))
         }
         "nav_3d" => {
             if let Some(n) = app.menus.navigator.as_mut() {
@@ -738,6 +749,19 @@ fn toggle_set_graphics_and_controls(app: &mut App, id: &str, on: bool, bit: Stri
         "clouds" => {
             app.settings.clouds = on;
             Some(("clouds", bit))
+        }
+        "ray_tracing" => {
+            app.settings.ray_tracing_on = on;
+            app.service_msg = Some((omsi_ui::tr("Takes effect when the game starts the next time").into_owned(), 5.0));
+            Some(("ray_tracing", bit))
+        }
+        "cloud_shadows" => {
+            app.settings.cloud_shadows = on;
+            Some(("cloud_shadows", bit))
+        }
+        "light_glow" => {
+            app.settings.light_glow = on;
+            Some(("light_glow", bit))
         }
         "windy_trees" => {
             app.settings.windy_trees = on;

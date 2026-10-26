@@ -4,7 +4,7 @@
 //!
 //! A theme is a folder with a `theme.json`: `Themes/<id>/` of a content root, or a plugin's own
 //! folder (`plugins/<name>/theme.json`, its id the plugin's name). The player chooses one in
-//! Options › Interface (`Settings::ui_theme`); a plugin may switch to one (`omsi.ui.set_theme`).
+//! Options › Interface (`Settings::ui_theme_pack`); a plugin may switch to one (`omsi.ui.set_theme`).
 //! A content root another machine sent (a LAN host's mods) brings none.
 
 use std::path::{Component, Path, PathBuf};
@@ -296,7 +296,7 @@ fn load_from(themes: &[(String, PathBuf)], id: &str) -> Result<Theme, String> {
     parse(id, dir, &text)
 }
 
-/// The value of the setting `ui_theme` as read: one line, "" for openOMSI's own look.
+/// The value of the setting `ui_theme_pack` as read: one line, "" for openOMSI's own look.
 pub(crate) fn setting(v: &str) -> String {
     let v = v.trim();
     if v.eq_ignore_ascii_case("openomsi") || v.eq_ignore_ascii_case("default") || !valid_id(v) {
@@ -458,9 +458,9 @@ mod tests {
     fn the_theme_row_is_translated() {
         let desc = "The look of the menus, the panels and the loading screen: openOMSI's own, or one a mod or plugin brings";
         crate::with_test_language("nl", || {
-            assert_eq!(omsi_ui::tr("Interface theme"), "Thema van de interface");
+            assert_eq!(omsi_ui::tr("Theme pack"), "Themapakket");
             assert!(omsi_ui::tr(desc).starts_with("Hoe de menu's"));
         });
-        crate::with_test_language("de", || assert_eq!(omsi_ui::tr("Interface theme"), "Design der Oberfläche"));
+        crate::with_test_language("de", || assert_eq!(omsi_ui::tr("Theme pack"), "Designpaket"));
     }
 }

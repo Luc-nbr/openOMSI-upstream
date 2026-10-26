@@ -6,8 +6,8 @@ and notifications; the panels as frosted glass over the game's picture; the logo
 the pause menu; and the loading screen, whose logo can itself be the loading bar. The HUD, the
 navigator and the cockpit keep their own look (the navigator follows its light or dark map).
 
-The player chooses a theme in **Options › Interface › Interface theme**; openOMSI's own look is
-the first entry. The choice is kept in the settings file (`ui_theme`) and is in force from the
+The player chooses a theme in **Options › Interface › Theme pack**; openOMSI's own look is
+the first entry. The choice is kept in the settings file (`ui_theme_pack`) and is in force from the
 loading screen of the next start on - a theme that cannot be read leaves openOMSI's own look, with
 a line in `game.log` saying why.
 

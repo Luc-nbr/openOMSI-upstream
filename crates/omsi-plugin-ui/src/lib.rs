@@ -28,32 +28,8 @@ pub use nav::{Docked, DockedMap};
 #[cfg(test)]
 mod preview;
 mod widgets;
-
-// --- the game's look: the notifications' card, the menus' amber accent ------------------
-
-/// The card under a notification or a panel: openOMSI's near black, or the interface
-/// theme's surface (`omsi_ui::theme`).
-fn card() -> Color {
-    let p = omsi_ui::theme::th();
-    if p == omsi_ui::theme::Palette::OPENOMSI {
-        Color::rgba(14, 16, 20, 225.0 / 255.0)
-    } else {
-        p.surface.alpha(225.0 / 255.0)
-    }
-}
-const INK: Color = Color::rgba(236, 236, 236, 1.0);
-const DARK_INK: Color = Color::rgba(18, 14, 8, 1.0);
-/// The accent: openOMSI's amber, or the interface theme's.
-fn accent() -> Color {
-    omsi_ui::theme::th().accent
-}
-// (solid greys, the menus' own: the pipeline blends in linear light, where a tenth of white
-// over the dark card came out a light grey)
-const TRACK: Color = Color::rgba(62, 62, 62, 1.0);
-const DIVIDER: Color = Color::rgba(52, 52, 52, 1.0);
-const BUTTON: Color = Color::rgba(44, 44, 44, 1.0);
-const TILE: Color = Color::rgba(46, 48, 54, 0.6);
-const SHADOW: Color = Color::rgba(0, 0, 0, 0.35);
+mod look;
+use look::*;
 
 /// A text line's height, times its size.
 pub const LINE: f32 = 1.3;
