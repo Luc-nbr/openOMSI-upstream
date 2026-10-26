@@ -1,8 +1,27 @@
 //! The interface themes the game has (`ui.themes`, `ui.theme`), and a plugin's wish to use one
-//! (`ui.set_theme`): the game tells the plugins its themes each frame, and takes a wish after
-//! their frame (it becomes the player's setting, as if chosen in Options › Interface).
+//! (`ui.set_theme`): the game tells the plugins its themes before it loads them and each frame,
+//! and takes a wish after their frame (it becomes the player's setting, as if chosen in
+//! Options › Interface).
 
 use super::UiState;
+use std::cell::RefCell;
+
+thread_local! {
+    /// The game's themes and the one in use, for the plugins it loads next: their main chunk
+    /// already sees them (`ui.themes`, `ui.theme`, `ui.set_theme`), before the first frame.
+    static FOR_LOAD: RefCell<(Vec<ThemeInfo>, String)> = const { RefCell::new((Vec::new(), String::new())) };
+}
+
+/// The game's themes and the one in use ("" openOMSI's own look), told before it loads the
+/// plugins on this thread.
+pub fn themes_for_load(themes: Vec<ThemeInfo>, now: &str) {
+    FOR_LOAD.with(|f| *f.borrow_mut() = (themes, now.to_string()));
+}
+
+/// What the game told before it loads the plugins (none: no themes yet).
+pub(super) fn for_load() -> (Vec<ThemeInfo>, String) {
+    FOR_LOAD.with(|f| f.borrow().clone())
+}
 
 /// One of the game's interface themes: its id (the setting's value; "" openOMSI's own look)
 /// and its name.
@@ -68,5 +87,17 @@ mod tests {
         assert_eq!(ui.take_theme_ask().as_deref(), Some(""));
         assert!(ui.ask_theme("sparkle").unwrap_err().contains("sparkle"));
         assert_eq!(ui.take_theme_ask(), None);
+    }
+
+    /// A plugin's main chunk, run as the game loads it, already knows the themes.
+    #[test]
+    fn the_themes_are_known_as_the_plugins_load() {
+        let themes = vec![ThemeInfo { id: String::new(), name: "openOMSI".into() }, ThemeInfo { id: "omsihub".into(), name: "Omsi-Hub".into() }];
+        themes_for_load(themes.clone(), "");
+        let mut ui = UiState::default();
+        assert_eq!((ui.themes(), ui.theme()), (&themes[..], ""));
+        ui.ask_theme("omsihub").unwrap();
+        assert_eq!(ui.take_theme_ask().as_deref(), Some("omsihub"));
+        themes_for_load(Vec::new(), "");
     }
 }

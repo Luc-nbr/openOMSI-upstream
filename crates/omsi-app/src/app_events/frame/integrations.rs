@@ -43,7 +43,11 @@ impl App {
             steam.client.run_callbacks();
         }
         // the plugins' frame, with the bus's scripts done
-        let mut plugins = self.integrations.plugins.take().unwrap_or_else(crate::plugins::load);
+        // (their main chunk already knows the interface themes: `ui.themes`, `ui.theme`)
+        let mut plugins = self.integrations.plugins.take().unwrap_or_else(|| {
+            omsi_plugin::ui::themes_for_load(theme_infos(), &self.settings.ui_theme_pack);
+            crate::plugins::load()
+        });
         self.sync_vehicle_scripts(&mut plugins);
         if !self.paused && !omsi_cfg::flags::OMSI_NO_PLUGINS.is_set() {
             crate::plugin_io::object::drive(self, &mut plugins, dt);
@@ -58,8 +62,7 @@ impl App {
             // the interface themes there are, and the one in use (`ui.themes`, `ui.theme`)
             let mut ui = plugins.ui.borrow_mut();
             if ui.themes().is_empty() {
-                let list = crate::themes::choices().iter().map(|(id, name)| omsi_plugin::ui::ThemeInfo { id: id.clone(), name: name.clone() }).collect();
-                ui.set_themes(list, &self.settings.ui_theme_pack);
+                ui.set_themes(theme_infos(), &self.settings.ui_theme_pack);
             } else if ui.theme() != self.settings.ui_theme_pack {
                 let list = ui.themes().to_vec();
                 ui.set_themes(list, &self.settings.ui_theme_pack);
@@ -161,4 +164,9 @@ impl App {
             }
         }
     }
+}
+
+/// The game's interface themes as the plugins see them (`ui.themes`).
+fn theme_infos() -> Vec<omsi_plugin::ui::ThemeInfo> {
+    crate::themes::choices().iter().map(|(id, name)| omsi_plugin::ui::ThemeInfo { id: id.clone(), name: name.clone() }).collect()
 }

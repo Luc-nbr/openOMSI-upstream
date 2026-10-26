@@ -16,7 +16,7 @@ use std::rc::Rc;
 mod menu;
 pub use menu::{MenuItem, MAX_MENU_ITEMS, MAX_MENU_LABEL};
 mod theme;
-pub use theme::ThemeInfo;
+pub use theme::{themes_for_load, ThemeInfo};
 mod dock;
 pub use dock::Dock;
 
@@ -367,8 +367,9 @@ pub struct UiState {
 
 impl Default for UiState {
     fn default() -> Self {
+        let (themes, theme_now) = theme::for_load();
         // (until the game has drawn a frame: a 1080p screen)
-        UiState { panels: Vec::new(), toasts: Vec::new(), clicks: Vec::new(), changes: Vec::new(), focus: None, shown: true, screen: [1920.0, 1080.0, 1.0], serial: 0, typing: None, menu: Vec::new(), menu_picks: Vec::new(), dock: None, themes: Vec::new(), theme_now: String::new(), theme_ask: None }
+        UiState { panels: Vec::new(), toasts: Vec::new(), clicks: Vec::new(), changes: Vec::new(), focus: None, shown: true, screen: [1920.0, 1080.0, 1.0], serial: 0, typing: None, menu: Vec::new(), menu_picks: Vec::new(), dock: None, themes, theme_now, theme_ask: None }
     }
 }
 
