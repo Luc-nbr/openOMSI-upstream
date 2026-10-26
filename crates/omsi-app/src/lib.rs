@@ -105,6 +105,7 @@ use omsi_scene::threads;
 use omsi_scene::tiles;
 mod traffic;
 mod view_sync;
+mod watchdog;
 mod ui;
 
 // the game itself, split by what each part does
