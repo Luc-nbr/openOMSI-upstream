@@ -2,7 +2,7 @@
 //! a square, the icon white on grey or on the tile's own colour, ringed in the accent when it
 //! has the keys (`focus`), greyed and taking no clicks when it is `off`.
 
-use super::{color, Hit, HitKind, Item, Layout, ACCENT, INK, TILE};
+use super::{color, Hit, HitKind, Item, Layout, accent, INK, TILE};
 use omsi_plugin::ui::Element;
 use omsi_ui::{Color, Rect};
 
@@ -22,7 +22,7 @@ impl Layout<'_> {
         let b = Rect::new(r.x, r.y + (r.h - side) * 0.5, r.w, side);
         if focus {
             let ring = Rect::new(b.x - RING, b.y - RING, b.w + 2.0 * RING, b.h + 2.0 * RING);
-            self.rounded(ring, SQUARE_R + RING, ACCENT, None);
+            self.rounded(ring, SQUARE_R + RING, accent(), None);
         }
         let hit = (!off).then(|| {
             self.out.hits.push(Hit { r: b, element: e.id.clone(), kind: HitKind::Click });
