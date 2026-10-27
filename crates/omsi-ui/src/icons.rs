@@ -12,11 +12,25 @@ pub fn names() -> impl Iterator<Item = &'static str> {
     ICONS.iter().map(|(n, _)| *n)
 }
 
+/// An SVG read as a tree. An `<image>` is taken only from inside the SVG (a `data:` URL): a
+/// theme's logo comes from a mod, and a file name or path in it would let it read any file
+/// on the player's machine (`/dev/zero` forever), not only its theme's folder.
+fn tree(src: &str) -> Option<resvg::usvg::Tree> {
+    use resvg::usvg::{ImageHrefResolver, Options};
+    let opt = Options {
+        image_href_resolver: ImageHrefResolver {
+            resolve_data: ImageHrefResolver::default_data_resolver(),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..Options::default()
+    };
+    resvg::usvg::Tree::from_str(src, &opt).ok()
+}
+
 /// An icon as an anti-aliased alpha mask of `size` x `size` pixels, with the SVG's margins.
 pub fn rasterize(name: &str, size: u32) -> Option<Vec<u8>> {
     let src = svg(name)?;
-    let opt = resvg::usvg::Options::default();
-    let tree = resvg::usvg::Tree::from_str(src, &opt).ok()?;
+    let tree = tree(src)?;
     let mut pix = resvg::tiny_skia::Pixmap::new(size, size)?;
     let s = tree.size();
     let k = size as f32 / s.width().max(s.height());
@@ -27,8 +41,7 @@ pub fn rasterize(name: &str, size: u32) -> Option<Vec<u8>> {
 /// Any SVG (a logo) in its own colours, fitted into `w` x `h` pixels and centred: straight
 /// (not premultiplied) RGBA, as the interface's textures are.
 pub fn rasterize_rgba(src: &str, w: u32, h: u32) -> Option<Vec<u8>> {
-    let opt = resvg::usvg::Options::default();
-    let tree = resvg::usvg::Tree::from_str(src, &opt).ok()?;
+    let tree = tree(src)?;
     let mut pix = resvg::tiny_skia::Pixmap::new(w, h)?;
     let s = tree.size();
     let k = (w as f32 / s.width()).min(h as f32 / s.height());
@@ -43,7 +56,7 @@ pub fn rasterize_rgba(src: &str, w: u32, h: u32) -> Option<Vec<u8>> {
 /// The size an SVG is drawn at (its width and height in its own units); None when it cannot
 /// be read.
 pub fn svg_size(src: &str) -> Option<(f32, f32)> {
-    let tree = resvg::usvg::Tree::from_str(src, &resvg::usvg::Options::default()).ok()?;
+    let tree = tree(src)?;
     let s = tree.size();
     Some((s.width(), s.height()))
 }
@@ -52,7 +65,7 @@ pub fn svg_size(src: &str) -> Option<(f32, f32)> {
 /// what a theme's loading logo is drawn along (`progress_svg`). None when there is no such path.
 pub fn path_length(src: &str, id: &str) -> Option<f32> {
     use resvg::tiny_skia::PathSegment;
-    let tree = resvg::usvg::Tree::from_str(src, &resvg::usvg::Options::default()).ok()?;
+    let tree = tree(src)?;
     let resvg::usvg::Node::Path(path) = tree.node_by_id(id)? else { return None };
     let (mut len, mut at, mut start) = (0.0f32, (0.0f32, 0.0f32), (0.0f32, 0.0f32));
     let dist = |a: (f32, f32), b: (f32, f32)| ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
@@ -179,7 +192,7 @@ impl Stage {
 
 /// The marks of an SVG (`data-at`), in the order they stand in it.
 pub fn marks(src: &str) -> Vec<Mark> {
-    let Ok(tree) = resvg::usvg::Tree::from_str(src, &resvg::usvg::Options::default()) else { return Vec::new() };
+    let Some(tree) = tree(src) else { return Vec::new() };
     let attr = |tag: &str, name: &str| -> Option<String> {
         let k = tag.find(&format!(" {name}=\""))? + name.len() + 3;
         Some(tag[k..k + tag[k..].find('"')?].to_string())
@@ -366,5 +379,31 @@ mod tests {
         let covered = a.iter().filter(|&&v| v > 128).count();
         assert!(covered > 150 && covered < 900, "{covered}");
         assert!(super::rasterize("no_such_icon", 32).is_none());
+    }
+
+    /// An `<image>` of a logo that names a file outside it is left out (usvg's own options
+    /// would read any file); one inside it (`data:`) is drawn.
+    #[test]
+    fn a_logo_reads_no_file_of_its_own_accord() {
+        fn images(g: &resvg::usvg::Group) -> usize {
+            g.children().iter().map(|n| match n {
+                resvg::usvg::Node::Image(_) => 1,
+                resvg::usvg::Node::Group(g) => images(g),
+                _ => 0,
+            }).sum()
+        }
+        let outside = std::env::temp_dir().join(format!("omsi-ui-outside-{}.svg", std::process::id()));
+        std::fs::write(&outside, r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#).unwrap();
+        let href = outside.to_string_lossy().replace('\\', "/");
+        let src = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><rect width="5" height="5"/><image href="{href}" width="10" height="10"/></svg>"#);
+        let loose = resvg::usvg::Tree::from_str(&src, &resvg::usvg::Options::default()).unwrap();
+        assert_eq!(images(loose.root()), 1, "usvg's own options read the file: the test reaches it");
+        assert_eq!(images(super::tree(&src).unwrap().root()), 0);
+        assert!(super::svg_size(&src).is_some());
+        std::fs::remove_file(&outside).ok();
+
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let src = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><image href="data:image/png;base64,{png}" width="10" height="10"/></svg>"#);
+        assert_eq!(images(super::tree(&src).unwrap().root()), 1);
     }
 }
