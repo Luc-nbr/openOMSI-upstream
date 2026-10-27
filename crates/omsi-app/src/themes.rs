@@ -18,6 +18,8 @@ use omsi_ui::Color;
 pub(crate) const OWN: &str = "openomsi";
 /// The longest theme file, SVG logo or picture that is read (bytes).
 const MAX_FILE: u64 = 4 << 20;
+/// The widest and highest picture logo (pixels).
+const MAX_PICTURE: u32 = 4096;
 /// The longest name and title of a theme (characters).
 const MAX_NAME: usize = 40;
 /// The track under a logo drawn along its path: the whole path, this faint.
@@ -264,9 +266,16 @@ fn read_logo(dir: &Path, file: &str) -> Result<Logo, String> {
         let marks = omsi_ui::icons::marks(&src);
         return Ok(Logo::Svg { src, size, progress_len, marks });
     }
+    let fits = |w: u32, h: u32| (1..=MAX_PICTURE).contains(&w) && (1..=MAX_PICTURE).contains(&h);
+    let too_large = || format!("{file}: 1 to {MAX_PICTURE} pixels wide and high is expected");
+    // (its size from its header first: a small file can hold a picture far larger than that)
+    let header = image::ImageReader::open(&path).ok().and_then(|r| r.with_guessed_format().ok()).and_then(|r| r.into_dimensions().ok());
+    if header.is_some_and(|(w, h)| !fits(w, h)) {
+        return Err(too_large());
+    }
     let img = omsi_texture::decode_file(&path).map_err(|e| format!("{file}: {e}"))?;
-    if img.width == 0 || img.height == 0 || img.width > 4096 || img.height > 4096 {
-        return Err(format!("{file}: 1 to 4096 pixels wide and high is expected"));
+    if !fits(img.width, img.height) {
+        return Err(too_large());
     }
     Ok(Logo::Picture { w: img.width, h: img.height, rgba: Arc::new(img.rgba) })
 }
@@ -446,6 +455,9 @@ mod tests {
         assert!(bad(r#"{"logo": "../../secret.svg"}"#).contains("theme's folder"));
         assert!(bad(r#"{"logo": "/etc/x.svg"}"#).contains("theme's folder"));
         assert!(bad(r#"{"logo": "missing.svg"}"#).contains("missing.svg"));
+        // (a picture too large is told by its header, before it is decoded)
+        image::RgbaImage::new(5000, 1).save(dir.join("wide.png")).unwrap();
+        assert!(bad(r#"{"logo": "wide.png"}"#).contains("4096"));
         // (a stroke without the path to draw along: filled; no name: the id)
         std::fs::write(dir.join("plain.svg"), r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>"#).unwrap();
         let t = parse("x", &dir, r#"{"loading": {"logo": "plain.svg", "progress": "stroke"}, "glass": true}"#).unwrap();
