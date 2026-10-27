@@ -44,7 +44,8 @@ impl LoadingLook {
         match theme {
             None => LoadingLook { bg: [18, 18, 18], text: [184, 184, 184], ink: [237, 237, 237], accent: [232, 160, 48], track: [42, 42, 42], stripes: ([232, 160, 48], [244, 182, 82]) },
             Some(t) => {
-                let p = t.palette;
+                // (the palette in force: the theme's over the light or dark look)
+                let p = omsi_ui::theme::th();
                 LoadingLook {
                     bg: rgb(t.loading.background.unwrap_or(p.bg)),
                     text: rgb(t.loading.text.unwrap_or(p.ink_2)),

@@ -4,17 +4,19 @@
 
 use super::{button, card, grow_row, note, title};
 use omsi_plugin::ui::{Anchor, Panel};
+use omsi_ui::theme::Palette;
 
-pub(crate) fn panel(at: glam::DVec3) -> Panel {
+pub(crate) fn panel(at: glam::DVec3, pal: Palette) -> Panel {
     card(
         Anchor::Center,
         0.0,
         0.0,
         360.0,
         236,
+        pal,
         vec![
             title("Move the vehicle here?"),
-            note(&format!("x {:.0}  y {:.0}", at.x, at.y)),
+            note(&format!("x {:.0}  y {:.0}", at.x, at.y), pal),
             grow_row(vec![button("yes", "Move here", Some("near_me")), button("no", "Cancel", Some("close"))]),
         ],
     )

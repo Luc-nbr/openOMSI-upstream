@@ -741,6 +741,7 @@ pub(super) fn photo_panel(cx: &mut super::PhotoCx, dt: f32) {
     };
     let Some(ph) = cx.ui.photo.as_mut() else { return };
     cx.menus.shell.opaque = ph.render.showing_photo() && cx.menus.shell.picture_tex.is_some();
+    crate::themes::sync(&cx.common.settings.ui_theme_pack, cx.common.settings.is_light_theme());
     cx.menus.shell.begin(w, h, scale, dt);
     draw(&mut *cx.menus.shell, ph, &info);
     cx.menus.shell.finish();

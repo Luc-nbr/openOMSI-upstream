@@ -1,10 +1,11 @@
 //! The launcher's look: flat and dark (neutral greys, no tint), one amber accent used
 //! sparingly - after the calm menus of Euro Truck Simulator 2.
 //!
-//! The game's screens read their colours from the palette in force ([`th`]): openOMSI's own
-//! ([`Palette::OPENOMSI`]) unless the player chose an interface theme (`Themes/<id>/theme.json`,
-//! docs/THEMES.md), which puts its own in force with [`set`]. A theme may also make the
-//! panels frosted glass over the game's picture ([`Glass`]).
+//! The game's screens read their colours from the palette in force ([`th`]): openOMSI's own,
+//! dark ([`Palette::OPENOMSI`]) or light ([`Palette::LIGHT`]) as the player chose
+//! ([`palette`]), and over it the colours of an interface theme the player chose
+//! (`Themes/<id>/theme.json`, docs/THEMES.md: [`Palette::with_colors`]), put in force with
+//! [`set`]. A theme may also make the panels frosted glass over the game's picture ([`Glass`]).
 
 use std::cell::Cell;
 use std::sync::RwLock;
@@ -100,6 +101,38 @@ impl Palette {
         glass: None,
     };
 
+    /// openOMSI's light look (the setting `ui_theme` "light").
+    pub const LIGHT: Palette = Palette {
+        accent: Color::rgba(185, 120, 14, 1.0),
+        accent_2: Color::rgba(52, 116, 184, 1.0),
+        danger: Color::rgba(188, 54, 48, 1.0),
+        ok: Color::rgba(42, 132, 62, 1.0),
+        warn: Color::rgba(180, 112, 18, 1.0),
+        text: Color::rgba(32, 32, 32, 1.0),
+        text_soft: Color::rgba(72, 72, 72, 1.0),
+        text_dim: Color::rgba(104, 104, 104, 1.0),
+        text_faint: Color::rgba(136, 136, 136, 1.0),
+        rail: Color::rgba(239, 239, 239, 1.0),
+        panel: Color::rgba(252, 252, 252, 1.0),
+        field: Color::rgba(246, 246, 246, 1.0),
+        hover: Color::rgba(234, 234, 234, 1.0),
+        selected: Color::rgba(224, 224, 224, 1.0),
+        edge: Color::rgba(0, 0, 0, 0.12),
+        bg: Color::rgba(247, 247, 247, 1.0),
+        sidebar: Color::rgba(239, 239, 239, 1.0),
+        surface: Color::rgba(255, 255, 255, 1.0),
+        surface_2: Color::rgba(242, 242, 242, 1.0),
+        surface_3: Color::rgba(230, 230, 230, 1.0),
+        ink: Color::rgba(28, 28, 28, 1.0),
+        ink_2: Color::rgba(76, 76, 76, 1.0),
+        ink_muted: Color::rgba(112, 112, 112, 1.0),
+        accent_hover: Color::rgba(204, 137, 22, 1.0),
+        accent_ink: Color::rgba(30, 20, 4, 1.0),
+        danger_2: Color::rgba(203, 62, 55, 1.0),
+        radius: 8.0,
+        glass: None,
+    };
+
     /// The colour of `name` (the field's name, as a theme file has it), to set it.
     pub fn color_mut(&mut self, name: &str) -> Option<&mut Color> {
         Some(match name {
@@ -133,12 +166,12 @@ impl Palette {
         })
     }
 
-    /// A palette with the colours `given` (by name) on openOMSI's; a colour the theme leaves
-    /// out follows the one it goes with there (the panels' greys the surfaces', the texts the
-    /// inks', the darker red the red), so that a theme of a few colours is whole. Names it
-    /// does not know are returned.
-    pub fn with_colors<'a>(given: impl IntoIterator<Item = (&'a str, Color)>) -> (Palette, Vec<&'a str>) {
-        let mut p = Palette::OPENOMSI;
+    /// A palette with the colours `given` (by name) on `base` (openOMSI's dark or light look,
+    /// [`palette`]); a colour the theme leaves out follows the one it goes with there (the
+    /// panels' greys the surfaces', the texts the inks', the darker red the red), so that a
+    /// theme of a few colours is whole. Names it does not know are returned.
+    pub fn with_colors<'a>(base: Palette, given: impl IntoIterator<Item = (&'a str, Color)>) -> (Palette, Vec<&'a str>) {
+        let mut p = base;
         let mut set: Vec<&str> = Vec::new();
         let mut unknown = Vec::new();
         for (name, c) in given {
@@ -179,6 +212,11 @@ impl Palette {
         }
         (p, unknown)
     }
+}
+
+/// openOMSI's own look, light or dark.
+pub fn palette(light: bool) -> Palette {
+    if light { Palette::LIGHT } else { Palette::OPENOMSI }
 }
 
 static PALETTE: RwLock<Palette> = RwLock::new(Palette::OPENOMSI);
@@ -278,7 +316,7 @@ mod tests {
     fn a_colour_left_out_follows_the_one_it_goes_with() {
         let navy = Color::rgba(10, 20, 46, 1.0);
         let orange = Color::rgba(245, 134, 32, 1.0);
-        let (p, unknown) = Palette::with_colors([("background", navy), ("accent", orange), ("ink", Color::WHITE), ("sparkle", navy)]);
+        let (p, unknown) = Palette::with_colors(Palette::OPENOMSI, [("background", navy), ("accent", orange), ("ink", Color::WHITE), ("sparkle", navy)]);
         assert_eq!(unknown, ["sparkle"]);
         assert_eq!((p.bg, p.rail, p.sidebar), (navy, navy, navy));
         assert_eq!((p.accent, p.warn), (orange, orange));
@@ -286,8 +324,23 @@ mod tests {
         assert_eq!(p.text, Color::WHITE);
         assert_eq!(p.surface, Palette::OPENOMSI.surface);
         // (given itself, a colour stays as given)
-        let (p, _) = Palette::with_colors([("background", navy), ("sidebar", orange)]);
+        let (p, _) = Palette::with_colors(Palette::OPENOMSI, [("background", navy), ("sidebar", orange)]);
         assert_eq!((p.rail, p.sidebar), (navy, orange));
+    }
+
+    /// The light look is a palette of its own, with openOMSI's corners and no glass; a theme's
+    /// colours go over the look chosen, what it leaves out stays that look's.
+    #[test]
+    fn a_theme_goes_over_the_light_or_the_dark_look() {
+        assert_eq!(palette(false), Palette::OPENOMSI);
+        assert_eq!(palette(true), Palette::LIGHT);
+        assert_ne!(Palette::LIGHT.bg, Palette::OPENOMSI.bg);
+        assert_ne!(Palette::LIGHT.text, Palette::OPENOMSI.text);
+        assert_eq!((Palette::LIGHT.radius, Palette::LIGHT.glass), (Palette::OPENOMSI.radius, None));
+        let orange = Color::rgba(245, 134, 32, 1.0);
+        let (p, _) = Palette::with_colors(palette(true), [("accent", orange)]);
+        assert_eq!((p.accent, p.warn), (orange, orange));
+        assert_eq!((p.bg, p.text, p.surface), (Palette::LIGHT.bg, Palette::LIGHT.text, Palette::LIGHT.surface));
     }
 
     /// A palette set for one thread is that thread's: the others keep the one in force.

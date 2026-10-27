@@ -120,12 +120,27 @@ pub(crate) struct Loading {
 pub(crate) struct Theme {
     pub id: String,
     pub name: String,
-    pub palette: Palette,
+    /// The colours it gives (by name), over openOMSI's light or dark look (`palette`).
+    pub colors: Vec<(String, Color)>,
+    /// The corners of its panels (none: openOMSI's).
+    pub radius: Option<f32>,
+    pub glass: Option<Glass>,
     pub loading: Loading,
     /// The logo at the top of the pause menu, and the name beside it (openOMSI's version
     /// stays under it).
     pub logo: Option<Logo>,
     pub title: Option<String>,
+}
+
+impl Theme {
+    /// Its palette over openOMSI's light or dark look, as the player chose (`ui_theme`): its
+    /// colours, what it leaves out from that look, its corners and its glass.
+    pub fn palette(&self, light: bool) -> Palette {
+        let (mut p, _) = Palette::with_colors(theme::palette(light), self.colors.iter().map(|(k, c)| (k.as_str(), *c)));
+        p.radius = self.radius.unwrap_or(p.radius);
+        p.glass = self.glass;
+        p
+    }
 }
 
 /// A theme file read: `text` of the folder `dir`, the theme `id`. What it gets wrong it says;
@@ -142,19 +157,22 @@ pub(crate) fn parse(id: &str, dir: &Path, text: &str) -> Result<Theme, String> {
         None => id.to_string(),
     };
     let mut colors: Vec<(String, Color)> = Vec::new();
+    let mut known = Palette::OPENOMSI;
     if let Some(c) = o.get("colors") {
         for (k, val) in c.as_object().ok_or("colors: an object of colours is expected")? {
-            colors.push((k.clone(), color_of(val).ok_or_else(|| format!("colors.{k}: \"#rrggbb\", \"#rrggbbaa\" or [r, g, b, a] is expected"))?));
+            let c = color_of(val).ok_or_else(|| format!("colors.{k}: \"#rrggbb\", \"#rrggbbaa\" or [r, g, b, a] is expected"))?;
+            if known.color_mut(k).is_some() {
+                colors.push((k.clone(), c));
+            } else {
+                log::warn!("interface theme \"{id}\": colors.{k} is not known, left out");
+            }
         }
     }
-    let (mut palette, unknown) = Palette::with_colors(colors.iter().map(|(k, c)| (k.as_str(), *c)));
-    for k in unknown {
-        log::warn!("interface theme \"{id}\": colors.{k} is not known, left out");
-    }
-    if let Some(r) = o.get("radius") {
-        palette.radius = r.as_f64().filter(|r| (0.0..=24.0).contains(r)).ok_or("radius: 0 to 24 is expected")? as f32;
-    }
-    palette.glass = match o.get("glass") {
+    let radius = match o.get("radius") {
+        Some(r) => Some(r.as_f64().filter(|r| (0.0..=24.0).contains(r)).ok_or("radius: 0 to 24 is expected")? as f32),
+        None => None,
+    };
+    let glass = match o.get("glass") {
         None | Some(serde_json::Value::Bool(false)) | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::Bool(true)) => Some(Glass::DEFAULT),
         Some(serde_json::Value::Object(g)) => {
@@ -199,7 +217,7 @@ pub(crate) fn parse(id: &str, dir: &Path, text: &str) -> Result<Theme, String> {
     }
     let logo = o.get("logo").map(|f| text_of(f, "logo").and_then(|f| read_logo(dir, &f))).transpose()?;
     let title = o.get("title").map(|t| text_of(t, "title")).transpose()?;
-    Ok(Theme { id: id.to_string(), name, palette, loading, logo, title })
+    Ok(Theme { id: id.to_string(), name, colors, radius, glass, loading, logo, title })
 }
 
 /// A name or a file of the theme file: a text, on one line, not too long.
@@ -307,33 +325,43 @@ pub(crate) fn setting(v: &str) -> String {
 
 struct State {
     wanted: String,
+    light: bool,
     theme: Option<Arc<Theme>>,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { wanted: String::new(), theme: None });
+static STATE: Mutex<State> = Mutex::new(State { wanted: String::new(), light: false, theme: None });
 
-/// Puts the theme `id` in force (the setting's value), when it is not already: read anew, its
+/// Puts the theme `id` (the setting `ui_theme_pack`) in force over openOMSI's light or dark
+/// look (`ui_theme`), when they are not already: the theme read anew when it is another, the
 /// palette for the screens. A theme that cannot be read leaves openOMSI's look, with a line in
 /// the log why. Cheap to call every frame.
-pub(crate) fn sync(id: &str) {
+pub(crate) fn sync(id: &str, light: bool) {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    if s.wanted == id {
+    if s.wanted == id && s.light == light {
         return;
     }
-    s.wanted = id.to_string();
-    s.theme = None;
-    let mut palette = Palette::OPENOMSI;
-    if !id.is_empty() {
-        match load_from(&found(), id) {
-            Ok(t) => {
-                log::info!("interface theme \"{}\" ({}): glass {}, loading {:?}", t.id, t.name, t.palette.glass.is_some(), t.loading.progress);
-                palette = t.palette;
-                s.theme = Some(Arc::new(t));
+    if s.wanted != id {
+        s.wanted = id.to_string();
+        s.theme = None;
+        if !id.is_empty() {
+            match load_from(&found(), id) {
+                Ok(t) => {
+                    log::info!("interface theme \"{}\" ({}): glass {}, loading {:?}", t.id, t.name, t.glass.is_some(), t.loading.progress);
+                    s.theme = Some(Arc::new(t));
+                }
+                Err(e) => log::warn!("interface theme \"{id}\": {e} - openOMSI's own look"),
             }
-            Err(e) => log::warn!("interface theme \"{id}\": {e} - openOMSI's own look"),
         }
     }
+    s.light = light;
+    let palette = s.theme.as_ref().map_or(theme::palette(light), |t| t.palette(light));
     theme::set(palette);
+}
+
+/// The palette of the theme in force over openOMSI's light or dark look: what `sync` puts in
+/// force, for what is built from the settings rather than drawn (the game's own panels).
+pub(crate) fn palette(light: bool) -> Palette {
+    current().map_or(theme::palette(light), |t| t.palette(light))
 }
 
 /// The theme in force (none: openOMSI's own look).
@@ -385,10 +413,10 @@ mod tests {
         }"##;
         let t = parse("omsihub", &dir, text).unwrap();
         assert_eq!((t.name.as_str(), t.title.as_deref()), ("Omsi-Hub", Some("Omsi-Hub")));
-        assert_eq!(t.palette.accent, Color::rgba(0xf5, 0x86, 0x20, 1.0));
-        assert_eq!((t.palette.surface, t.palette.panel), (Color::rgba(16, 30, 62, 1.0), Color::rgba(16, 30, 62, 1.0)));
-        assert_eq!(t.palette.radius, 14.0);
-        assert_eq!(t.palette.glass, Some(Glass { opacity: 0.55, blur: 28.0, ..Glass::DEFAULT }));
+        assert_eq!(t.palette(false).accent, Color::rgba(0xf5, 0x86, 0x20, 1.0));
+        assert_eq!((t.palette(false).surface, t.palette(false).panel), (Color::rgba(16, 30, 62, 1.0), Color::rgba(16, 30, 62, 1.0)));
+        assert_eq!(t.palette(false).radius, 14.0);
+        assert_eq!(t.palette(false).glass, Some(Glass { opacity: 0.55, blur: 28.0, ..Glass::DEFAULT }));
         assert_eq!(t.loading.progress, Progress::Stroke);
         assert_eq!(t.loading.background, Some(Color::rgba(7, 16, 31, 1.0)));
         let logo = t.loading.logo.as_ref().unwrap();
@@ -421,8 +449,8 @@ mod tests {
         // (a stroke without the path to draw along: filled; no name: the id)
         std::fs::write(dir.join("plain.svg"), r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>"#).unwrap();
         let t = parse("x", &dir, r#"{"loading": {"logo": "plain.svg", "progress": "stroke"}, "glass": true}"#).unwrap();
-        assert_eq!((t.name.as_str(), t.loading.progress, t.palette.glass), ("x", Progress::Fill, Some(Glass::DEFAULT)));
-        assert_eq!(t.palette.accent, Palette::OPENOMSI.accent);
+        assert_eq!((t.name.as_str(), t.loading.progress, t.palette(false).glass), ("x", Progress::Fill, Some(Glass::DEFAULT)));
+        assert_eq!(t.palette(false).accent, Palette::OPENOMSI.accent);
     }
 
     /// Themes are found in the content roots' `Themes` folders and in the plugins' folders;
@@ -444,7 +472,7 @@ mod tests {
         let ids: Vec<&str> = found.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(ids, ["Night", "omsihub"]);
         let t = load_from(&found, "OMSIHUB").unwrap();
-        assert_eq!((t.id.as_str(), t.palette.accent), ("omsihub", Color::rgba(0xf5, 0x86, 0x20, 1.0)));
+        assert_eq!((t.id.as_str(), t.palette(false).accent), ("omsihub", Color::rgba(0xf5, 0x86, 0x20, 1.0)));
         assert!(load_from(&found, "plain").is_err());
         // the setting: one id, openOMSI's own look by any of its names
         assert_eq!(setting(" omsihub "), "omsihub");

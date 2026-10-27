@@ -23,9 +23,10 @@ use omsi_ui::theme::*;
 use omsi_ui::kit::{id_of, ButtonKind, Ui};
 use crate::ui::{DropdownView, MenuKind, Preview};
 
-/// The paused game, dimmed, when no category is chosen; a category page, a list or a settings
-/// window has the background solid behind it. In a glass theme the picture is dimmed only a
-/// little behind the rail alone, and blurred under some of the background behind a page.
+/// The paused game, dimmed, behind a category page; a list or a settings window has the
+/// background solid behind it. In a glass theme the picture is dimmed only a little behind the
+/// rail alone, and blurred under some of the background behind a page.
+const PAGE_VEIL: f32 = 0.72;
 const HOME_VEIL: f32 = 0.85;
 const GLASS_HOME_VEIL: f32 = 0.3;
 const GLASS_PAGE_VEIL: f32 = 0.5;
@@ -129,14 +130,12 @@ pub(crate) fn draw(sh: &mut Shell, v: &PauseView) {
         }
         // (the blurred picture not there yet: as good as solid)
         (Some(_), _) => sh.ui.p().rect(page, bg.alpha(if solid { HOME_VEIL } else { GLASS_HOME_VEIL })),
-        (None, _) => sh.ui.p().rect(page, if solid { bg } else { bg.alpha(HOME_VEIL) }),
+        (None, _) => sh.ui.p().rect(page, if v.list.is_some() { bg } else { bg.alpha(PAGE_VEIL) }),
     }
     if let Some(list) = v.list.as_ref() {
         list_page(sh, v, list, page);
     } else {
-        if !sh.pause_hidden {
-            navigation_ui::page(sh, v, page, !sidebar);
-        }
+        navigation_ui::page(sh, v, page, !sidebar);
     }
     if sidebar {
         navigation_ui::rail(sh, v);
@@ -389,15 +388,17 @@ fn settings_row(ui: &mut Ui, k: usize, label: &str, r: Rect, kbd: bool, dd_open:
         "s" | "i" => r.w - 80.0,
         _ => ctl.x - lx - 12.0,
     };
+    let name: Cow<'_, str> = omsi_ui::tr(row.name);
+    let desc: Cow<'_, str> = omsi_ui::tr(row.desc);
     let ink = th().text_soft.mix(th().text, t);
     if row.desc.is_empty() {
-        ui.text_in(row.name, Rect::new(lx, r.y, name_w, r.h), 13.0, Weight::Regular, ink, Align::Left);
+        ui.text_in(name.as_ref(), Rect::new(lx, r.y, name_w, r.h), 13.0, Weight::Regular, ink, Align::Left);
     } else {
-        ui.text_in(row.name, Rect::new(lx, r.y + 6.0, name_w, 20.0), 13.0, Weight::Medium, ink, Align::Left);
-        ui.text_in(row.desc, Rect::new(lx, r.y + 25.0, name_w, 17.0), 11.5, Weight::Regular, th().text_dim, Align::Left);
+        ui.text_in(name.as_ref(), Rect::new(lx, r.y + 6.0, name_w, 20.0), 13.0, Weight::Medium, ink, Align::Left);
+        ui.text_in(desc.as_ref(), Rect::new(lx, r.y + 25.0, name_w, 17.0), 11.5, Weight::Regular, th().text_dim, Align::Left);
         // (cut short by a narrow column: the whole of it under the mouse)
-        if ui.width(row.desc, 11.5, Weight::Regular) > name_w {
-            ui.tooltip(Rect::new(lx, r.y, name_w, r.h), row.desc);
+        if ui.width(desc.as_ref(), 11.5, Weight::Regular) > name_w {
+            ui.tooltip(Rect::new(lx, r.y, name_w, r.h), desc.as_ref());
         }
     }
     match row.kind {

@@ -11,6 +11,11 @@ the first entry. The choice is kept in the settings file (`ui_theme_pack`) and i
 loading screen of the next start on - a theme that cannot be read leaves openOMSI's own look, with
 a line in `game.log` saying why.
 
+A theme goes over openOMSI's light or dark look, whichever the player chose in **Options ›
+Interface › Interface theme** (`ui_theme`): its colours, corners and glass on top, and what it
+leaves out from that look. A theme that gives all its surfaces and inks looks the same in both; one
+of a few colours (an accent alone) is a light or a dark look with its accent.
+
 ## Where themes live
 
 A theme is a folder with a `theme.json`; its id is the folder's name (letters, digits, `-`, `_`
@@ -48,7 +53,7 @@ used. A content folder another player's game sent in a LAN session brings no the
 }
 ```
 
-Everything is optional; what a theme leaves out stays openOMSI's.
+Everything is optional; what a theme leaves out stays openOMSI's (light or dark, as chosen).
 
 | Key | |
 | --- | --- |

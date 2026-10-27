@@ -46,7 +46,7 @@ impl App {
     ) {
         let mut finish = false;
         let mut reconfigure = false;
-        crate::themes::sync(&self.settings.ui_theme_pack);
+        crate::themes::sync(&self.settings.ui_theme_pack, self.settings.is_light_theme());
         let shot = self.perf.shot.take();
         if let Some(s) = self.gfx.surface.as_ref() {
             let (w, h) = (s.config.width, s.config.height);
