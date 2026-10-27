@@ -47,6 +47,9 @@ impl App {
         let mut finish = false;
         let mut reconfigure = false;
         crate::themes::sync(&self.settings.ui_theme_pack, self.settings.is_light_theme());
+        if let (Some(s), Some(r)) = (self.gfx.surface.as_mut(), self.renderer.as_ref()) {
+            s.set_glass(r, omsi_ui::theme::th().glass.is_some());
+        }
         let shot = self.perf.shot.take();
         if let Some(s) = self.gfx.surface.as_ref() {
             let (w, h) = (s.config.width, s.config.height);
